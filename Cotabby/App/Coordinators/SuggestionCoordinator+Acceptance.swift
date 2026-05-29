@@ -99,6 +99,11 @@ extension SuggestionCoordinator {
                 message: message,
                 normalizedOutput: insertionChunk
             )
+            // Replay the consumed accept key so the host app still receives the keystroke.
+            // Without this, a transient insertion failure silently swallows the user's Tab.
+            if let originalEvent {
+                inputMonitor.replayConsumedAcceptKey(keyCode: originalEvent.keyCode, flags: originalEvent.flags)
+            }
             return false
         }
 
@@ -341,9 +346,12 @@ extension SuggestionCoordinator {
 
     /// Gives the host app ~30ms to process the synthetic keystroke, then forces an AX snapshot
     /// so the overlay snaps to the real caret position without waiting for the 250ms poll.
+    /// The task is stored so it can be cancelled if a new accept or invalidation fires first.
     func schedulePostInsertionRefresh() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
-            guard let self else { return }
+        postInsertionRefreshTask?.cancel()
+        postInsertionRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 30_000_000) // 30ms
+            guard !Task.isCancelled, let self else { return }
             self.focusModel.refreshNow()
             self.reconcileActiveSession(with: self.focusModel.snapshot)
         }

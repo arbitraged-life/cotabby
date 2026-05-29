@@ -92,6 +92,7 @@ final class FocusTrackingModel: ObservableObject {
         guard let application = snapshot.externalApplicationIdentity(
             ignoredBundleIdentifier: ignoredBundleIdentifier
         ) else {
+            latestExternalApplication = nil
             return
         }
 

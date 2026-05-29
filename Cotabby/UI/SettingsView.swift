@@ -534,11 +534,13 @@ struct SettingsView: View {
     private var supportSection: some View {
         Section("Support") {
             LabeledContent {
-                Link(destination: URL(string: "https://ko-fi.com/cotabby")!) {
-                    Label("Support", systemImage: "heart.fill")
+                if let kofiURL = URL(string: "https://ko-fi.com/cotabby") {
+                    Link(destination: kofiURL) {
+                        Label("Support", systemImage: "heart.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.blue)
             } label: {
                 Text(
                     "Cotabby is free and open source, maintained by two university students in our free time. "
@@ -817,6 +819,8 @@ struct SettingsView: View {
                 )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(preset.name) ghost text color")
+        .accessibilityValue(isSelected ? "Selected" : "")
     }
 
     private func swatchFill(for preset: GhostTextColorPreset) -> Color {
