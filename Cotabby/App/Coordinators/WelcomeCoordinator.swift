@@ -153,7 +153,9 @@ final class WelcomeCoordinator: NSObject, NSWindowDelegate {
     private func completeOnboarding() {
         userDefaults.set(true, forKey: Self.onboardingCompletedDefaultsKey)
         permissionGuidanceController.dismiss()
+        welcomeWindowController?.window?.contentViewController = nil
         welcomeWindowController?.close()
+        welcomeWindowController = nil
     }
 
     private func showPermissionReminder() {
@@ -194,7 +196,9 @@ final class WelcomeCoordinator: NSObject, NSWindowDelegate {
 
     private func dismissPermissionReminder() {
         permissionGuidanceController.dismiss()
+        permissionReminderWindowController?.window?.contentViewController = nil
         permissionReminderWindowController?.close()
+        permissionReminderWindowController = nil
     }
 
     /// Window sizing is an AppKit responsibility, so the SwiftUI onboarding view reports its

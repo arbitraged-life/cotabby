@@ -197,53 +197,47 @@ extension SuggestionCoordinator {
     /// `schedulePrediction()` internally `replaceDebouncedWork`s, so back-to-back keystrokes
     /// still collapse cleanly.
     private func schedulePredictionAfterHostPublishDelay() {
+        hostPublishPollTask?.cancel()
         let baseline = focusModel.snapshot.context
-        pollForHostPublish(
-            baselineText: baseline?.precedingText,
-            baselineElementID: baseline?.elementIdentifier,
-            baselineSelectionLocation: baseline?.selection.location,
-            elapsedMs: 0
-        )
+        hostPublishPollTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.pollForHostPublishAsync(
+                baselineText: baseline?.precedingText,
+                baselineElementID: baseline?.elementIdentifier,
+                baselineSelectionLocation: baseline?.selection.location
+            )
+        }
     }
 
-    /// Drives the snapshot-changed gate. Reads the live focus snapshot, fires `schedulePrediction`
-    /// as soon as any of the captured baseline fields move on, and otherwise tail-calls itself
-    /// after `hostPublishPollIntervalMs` until the ceiling is hit.
-    private func pollForHostPublish(
+    /// Async poll loop that replaces the recursive DispatchQueue.main.asyncAfter approach.
+    /// Cancellation is cooperative via Task.isCancelled, so back-to-back keystrokes or
+    /// coordinator shutdown cleanly stop stale polls.
+    private func pollForHostPublishAsync(
         baselineText: String?,
         baselineElementID: String?,
-        baselineSelectionLocation: Int?,
-        elapsedMs: Int
-    ) {
-        focusModel.refreshNow()
-        let currentContext = focusModel.snapshot.context
+        baselineSelectionLocation: Int?
+    ) async {
+        var elapsedMs = 0
 
-        // No focus context at all means the user moved away from any editable field — let
-        // `schedulePrediction` and its downstream guards handle the disabled / unsupported state.
-        let textChanged = currentContext?.precedingText != baselineText
-        let elementChanged = currentContext?.elementIdentifier != baselineElementID
-        let selectionChanged = currentContext?.selection.location != baselineSelectionLocation
-        if textChanged || elementChanged || selectionChanged {
-            schedulePrediction()
-            return
-        }
+        while !Task.isCancelled {
+            focusModel.refreshNow()
+            let currentContext = focusModel.snapshot.context
 
-        // Ceiling: stop polling and generate anyway. Without this fallback a host that genuinely
-        // produces no AX change (rare but possible — e.g. dead-key composition) would never get
-        // its next prediction.
-        let nextElapsed = elapsedMs + Self.hostPublishPollIntervalMs
-        guard nextElapsed < Self.hostPublishWaitCeilingMs else {
-            schedulePrediction()
-            return
-        }
+            let textChanged = currentContext?.precedingText != baselineText
+            let elementChanged = currentContext?.elementIdentifier != baselineElementID
+            let selectionChanged = currentContext?.selection.location != baselineSelectionLocation
+            if textChanged || elementChanged || selectionChanged {
+                schedulePrediction()
+                return
+            }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(Self.hostPublishPollIntervalMs)) { [weak self] in
-            self?.pollForHostPublish(
-                baselineText: baselineText,
-                baselineElementID: baselineElementID,
-                baselineSelectionLocation: baselineSelectionLocation,
-                elapsedMs: nextElapsed
-            )
+            elapsedMs += Self.hostPublishPollIntervalMs
+            guard elapsedMs < Self.hostPublishWaitCeilingMs else {
+                schedulePrediction()
+                return
+            }
+
+            try? await Task.sleep(nanoseconds: UInt64(Self.hostPublishPollIntervalMs) * 1_000_000)
         }
     }
 

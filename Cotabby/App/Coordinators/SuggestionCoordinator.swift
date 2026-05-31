@@ -61,6 +61,10 @@ final class SuggestionCoordinator: ObservableObject {
     // barrier task that the next generation must cross before it can ask the runtime for output.
     var cacheResetSequence: UInt64 = 0
     var pendingCacheReset: (sequence: UInt64, task: Task<Void, Never>)?
+    // Cancellable post-insertion AX refresh so a new accept or invalidation can stop a stale one.
+    var postInsertionRefreshTask: Task<Void, Never>?
+    // Cancellable host-publish polling so back-to-back keystrokes cleanly stop stale polls.
+    var hostPublishPollTask: Task<Void, Never>?
 
     init(
         permissionManager: any SuggestionPermissionProviding,

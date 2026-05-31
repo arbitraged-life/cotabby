@@ -402,6 +402,10 @@ extension SuggestionCoordinator {
     /// Cancels debounce/generation tasks and advances the work id so late completions are ignored.
     func cancelPredictionWork() {
         workController.cancelAll()
+        hostPublishPollTask?.cancel()
+        hostPublishPollTask = nil
+        postInsertionRefreshTask?.cancel()
+        postInsertionRefreshTask = nil
     }
 
     /// Starts an ordered backend context reset without forcing synchronous input handlers to become

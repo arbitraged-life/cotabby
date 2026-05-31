@@ -103,11 +103,8 @@ final class PermissionGuidanceController {
     private func startTracking() {
         trackingTimer?.invalidate()
         trackingTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
-            guard let self else {
-                return
-            }
-            MainActor.assumeIsolated {
-                self.refreshPosition()
+            Task { @MainActor [weak self] in
+                self?.refreshPosition()
             }
         }
 
@@ -119,11 +116,8 @@ final class PermissionGuidanceController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self else {
-                return
-            }
-            MainActor.assumeIsolated {
-                self.refreshPosition()
+            Task { @MainActor [weak self] in
+                self?.refreshPosition()
             }
         }
 
