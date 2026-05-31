@@ -223,11 +223,15 @@ extension SuggestionCoordinator {
         applySessionDiagnostics(session, acceptanceAction: "Generated new suggestion.")
         state = .ready(text: session.remainingText, latency: session.latency)
 
+        let indicator: String? = session.totalCandidates > 1
+            ? "1/\(session.totalCandidates)"
+            : nil
         presentOverlay(
             text: session.remainingText,
             at: liveContext.caretRect,
             context: liveContext,
-            isRightToLeft: TextDirectionDetector.isRightToLeft(liveContext.precedingText)
+            isRightToLeft: TextDirectionDetector.isRightToLeft(liveContext.precedingText),
+            alternativeIndicator: indicator
         )
         logStage(
             "ready",

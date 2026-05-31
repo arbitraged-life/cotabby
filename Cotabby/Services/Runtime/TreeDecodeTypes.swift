@@ -29,6 +29,21 @@ struct TreeDecodeConfiguration: Sendable {
     /// and alternatives haven't started producing tokens yet.
     let earlyAbortOnSlowAlternatives: Bool
 
+    init(candidateCount: Int, diversityFactors: [Double], alternativeMaxTokens: Int?, earlyAbortOnSlowAlternatives: Bool) {
+        self.candidateCount = candidateCount
+        self.diversityFactors = diversityFactors
+        self.alternativeMaxTokens = alternativeMaxTokens
+        self.earlyAbortOnSlowAlternatives = earlyAbortOnSlowAlternatives
+    }
+
+    /// Convenience initializer that picks sensible defaults for the given candidate count.
+    init(candidateCount: Int) {
+        self.candidateCount = candidateCount
+        self.diversityFactors = (1..<candidateCount).map { Double($0) * 0.75 + 0.75 }
+        self.alternativeMaxTokens = nil
+        self.earlyAbortOnSlowAlternatives = true
+    }
+
     static let `default` = TreeDecodeConfiguration(
         candidateCount: 3,
         diversityFactors: [1.5, 2.5],

@@ -29,6 +29,13 @@ struct GeneralPaneView: View {
                 Toggle("Allow Multi-line Suggestions", isOn: multiLineEnabledBinding)
 
                 Toggle("Accept Punctuation With Word", isOn: autoAcceptTrailingPunctuationBinding)
+
+                Stepper(
+                    "Alternatives: \(suggestionSettings.treeCandidateCount == 1 ? "Off" : "\(suggestionSettings.treeCandidateCount)")",
+                    value: treeCandidateCountBinding,
+                    in: 1...4
+                )
+                .help("Generate multiple suggestion candidates (⌥] / ⌥[ to cycle). Uses more memory and latency.")
             }
 
             Section("Display") {
@@ -148,6 +155,13 @@ struct GeneralPaneView: View {
         Binding(
             get: { suggestionSettings.isClipboardContextEnabled },
             set: { suggestionSettings.setClipboardContextEnabled($0) }
+        )
+    }
+
+    private var treeCandidateCountBinding: Binding<Int> {
+        Binding(
+            get: { suggestionSettings.treeCandidateCount },
+            set: { suggestionSettings.setTreeCandidateCount($0) }
         )
     }
 

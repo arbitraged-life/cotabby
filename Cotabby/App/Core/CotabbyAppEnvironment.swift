@@ -128,7 +128,7 @@ final class CotabbyAppEnvironment {
         let suggestionEngine: any SuggestionGenerating = SuggestionEngineRouter(
             suggestionSettings: suggestionSettings,
             foundationModelEngine: foundationModelEngine,
-            llamaEngine: LlamaSuggestionEngine(runtimeManager: runtimeManager)
+            llamaEngine: LlamaSuggestionEngine(runtimeManager: runtimeManager, suggestionSettings: suggestionSettings)
         )
 
         let interactionState = SuggestionInteractionState()

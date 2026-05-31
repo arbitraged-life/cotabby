@@ -11,10 +11,12 @@ import Logging
 @MainActor
 final class LlamaSuggestionEngine {
     private let runtimeManager: LlamaRuntimeManager
+    private let suggestionSettings: SuggestionSettingsModel
     private var promptCacheHintTracker = LlamaPromptCacheHintTracker()
 
-    init(runtimeManager: LlamaRuntimeManager) {
+    init(runtimeManager: LlamaRuntimeManager, suggestionSettings: SuggestionSettingsModel) {
         self.runtimeManager = runtimeManager
+        self.suggestionSettings = suggestionSettings
     }
 
     /// Executes one generation request and packages the raw and normalized result for the coordinator.
@@ -90,8 +92,11 @@ final class LlamaSuggestionEngine {
         }
     }
 
-    /// Tree decode configuration. Defaults to 3 candidates; can be user-configured later.
-    var treeDecodeConfiguration: TreeDecodeConfiguration = .default
+    /// Tree decode configuration derived from user settings.
+    var treeDecodeConfiguration: TreeDecodeConfiguration {
+        let count = suggestionSettings.treeCandidateCount
+        return count <= 1 ? .disabled : TreeDecodeConfiguration(candidateCount: count)
+    }
 
     /// Clears both the Swift-side hint tracker and the native llama KV cache.
     /// The tracker reset is synchronous because it protects the next request from advertising

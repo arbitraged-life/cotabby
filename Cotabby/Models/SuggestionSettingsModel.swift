@@ -32,6 +32,8 @@ final class SuggestionSettingsModel: ObservableObject {
     @Published private(set) var focusPollIntervalMilliseconds: Int
     @Published private(set) var isMultiLineEnabled: Bool
     @Published private(set) var autoAcceptTrailingPunctuation: Bool
+    /// Number of tree decode candidates to generate (1 = disabled, 2-4 = enabled).
+    @Published private(set) var treeCandidateCount: Int
     @Published private(set) var acceptanceKeyCode: CGKeyCode
     @Published private(set) var acceptanceKeyModifiers: ShortcutModifierMask
     @Published private(set) var acceptanceKeyLabel: String
@@ -61,6 +63,7 @@ final class SuggestionSettingsModel: ObservableObject {
     private static let focusPollIntervalMillisecondsDefaultsKey = "cotabbyFocusPollIntervalMilliseconds"
     private static let multiLineEnabledDefaultsKey = "cotabbyMultiLineEnabled"
     private static let autoAcceptTrailingPunctuationDefaultsKey = "cotabbyAutoAcceptTrailingPunctuation"
+    private static let treeCandidateCountDefaultsKey = "cotabbyTreeCandidateCount"
     private static let acceptanceKeyCodeDefaultsKey = "cotabbyAcceptanceKeyCode"
     private static let acceptanceKeyModifiersDefaultsKey = "cotabbyAcceptanceKeyModifiers"
     private static let acceptanceKeyLabelDefaultsKey = "cotabbyAcceptanceKeyLabel"
@@ -178,6 +181,9 @@ final class SuggestionSettingsModel: ObservableObject {
         let resolvedMultiLineEnabled = userDefaults.object(forKey: Self.multiLineEnabledDefaultsKey) as? Bool ?? false
         let resolvedAutoAcceptTrailingPunctuation =
             userDefaults.object(forKey: Self.autoAcceptTrailingPunctuationDefaultsKey) as? Bool ?? true
+        let resolvedTreeCandidateCount = max(1, min(4,
+            userDefaults.object(forKey: Self.treeCandidateCountDefaultsKey) as? Int ?? 1
+        ))
 
         let resolvedAcceptanceKeyCode = CGKeyCode(
             userDefaults.object(forKey: Self.acceptanceKeyCodeDefaultsKey) as? Int
@@ -219,6 +225,7 @@ final class SuggestionSettingsModel: ObservableObject {
         focusPollIntervalMilliseconds = resolvedFocusPollIntervalMilliseconds
         isMultiLineEnabled = resolvedMultiLineEnabled
         autoAcceptTrailingPunctuation = resolvedAutoAcceptTrailingPunctuation
+        treeCandidateCount = resolvedTreeCandidateCount
         acceptanceKeyCode = resolvedAcceptanceKeyCode
         acceptanceKeyModifiers = resolvedAcceptanceKeyModifiers
         acceptanceKeyLabel = resolvedAcceptanceKeyLabel
@@ -342,6 +349,13 @@ final class SuggestionSettingsModel: ObservableObject {
         }
         autoAcceptTrailingPunctuation = enabled
         userDefaults.set(enabled, forKey: Self.autoAcceptTrailingPunctuationDefaultsKey)
+    }
+
+    func setTreeCandidateCount(_ count: Int) {
+        let clamped = max(1, min(4, count))
+        guard treeCandidateCount != clamped else { return }
+        treeCandidateCount = clamped
+        userDefaults.set(clamped, forKey: Self.treeCandidateCountDefaultsKey)
     }
 
     func setDebounceMilliseconds(_ value: Int) {
