@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// File overview:
 /// "General" detail pane of the redesigned Settings window. Groups settings into four visually
@@ -10,6 +11,9 @@ struct GeneralPaneView: View {
     @ObservedObject var suggestionSettings: SuggestionSettingsModel
     @ObservedObject var launchAtLoginService: LaunchAtLoginService
     let onShowWelcome: () -> Void
+
+    @State private var cotypistImportStatus: String?
+    @State private var importStatusIsError = false
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -146,6 +150,17 @@ struct GeneralPaneView: View {
                     Text("Uses your typing history to slightly favor the words and phrases you prefer. Subtle at lower values; too high may occasionally suggest a less fitting word.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+
+                HStack {
+                    Button("Import from Cotypist…") {
+                        importCotypistData()
+                    }
+                    if let importStatus = cotypistImportStatus {
+                        Text(importStatus)
+                            .font(.caption)
+                            .foregroundStyle(importStatusIsError ? .red : .secondary)
+                    }
                 }
             }
 
@@ -594,5 +609,35 @@ struct GeneralPaneView: View {
         }
 
         return color
+    }
+
+    private func importCotypistData() {
+        let panel = NSOpenPanel()
+        panel.title = "Import Cotypist History"
+        panel.message = "Select your Cotypist database (.db) or an exported JSON/JSONL file."
+        panel.allowedContentTypes = [
+            .init(filenameExtension: "db")!,
+            .init(filenameExtension: "sqlite")!,
+            .init(filenameExtension: "sqlite3")!,
+            .json
+        ]
+        panel.allowsOtherFileTypes = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        Task {
+            let result = await CotypistImporter.importFile(at: url)
+            await MainActor.run {
+                if let error = result.errorMessage {
+                    cotypistImportStatus = error
+                    importStatusIsError = true
+                } else {
+                    cotypistImportStatus = "Imported \(result.importedCount) entries (\(result.skippedCount) skipped)."
+                    importStatusIsError = false
+                }
+            }
+        }
     }
 }

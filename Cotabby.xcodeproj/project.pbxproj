@@ -91,6 +91,7 @@
 		4BFE7446533386550C839F25 /* EmojiTriggerStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 312C7306D916963F519CE0D9 /* EmojiTriggerStateMachine.swift */; };
 		4C6D8ED0A7B45D2EADF06DA5 /* SuggestionOverlayStabilityGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDB25ABC4FFB0E63477CDCB0 /* SuggestionOverlayStabilityGateTests.swift */; };
 		4CAFD8F3444FEDC9ACAFF529 /* LlamaRuntimeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A804F4DB6FD9BC8C27B2B65F /* LlamaRuntimeModels.swift */; };
+		4E564DB8824966680175F91A /* CotypistImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93F14CD985C5089F212A14DF /* CotypistImporter.swift */; };
 		4F369F5284DDCEABF082E59B /* SuggestionAvailabilityEvaluator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3609CC88A5280B3AA40414DF /* SuggestionAvailabilityEvaluator.swift */; };
 		4F38CE1C2602CF4F41323032 /* PermissionOverlayTrackerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12DD19BCE610808F1E38702D /* PermissionOverlayTrackerTests.swift */; };
 		50544CAAB55C9FD28688EA1B /* InsertionSafetyGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF5C45EF8068ABA66B82DB60 /* InsertionSafetyGate.swift */; };
@@ -200,6 +201,7 @@
 		CB65A79F164269991FABC32E /* SuggestionStateHelperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19DB9558F4D3AFB108D71649 /* SuggestionStateHelperTests.swift */; };
 		CC98B842D10574C5206BEFA7 /* FocusCapabilityResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70367FCC1E0F08EE3B8EB26F /* FocusCapabilityResolver.swift */; };
 		CCC83DC5AE51C17F153D5A6A /* PermissionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D82FFC568527700EC17C07D /* PermissionModels.swift */; };
+		CCE54775A06559D85A9B2A69 /* CotypistImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93F14CD985C5089F212A14DF /* CotypistImporter.swift */; };
 		CF4205B85D881B8176590D25 /* FocusSnapshotResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04E25414C307A20B6F9F20EC /* FocusSnapshotResolver.swift */; };
 		D0D4C0E28F5CD99669A49414 /* FoundationModelAvailabilityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8724ECA8FABBC82B0A2B943B /* FoundationModelAvailabilityService.swift */; };
 		D2CAA59F69BCBC07DDA2B0D8 /* ClipboardContextProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CF4FB0EC6C1BEB4EA74910A /* ClipboardContextProvider.swift */; };
@@ -379,6 +381,7 @@
 		90B0D133AB77A2503FB08827 /* ClipboardRelevanceFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardRelevanceFilterTests.swift; sourceTree = "<group>"; };
 		926B332E7B4CFEE42C4CAA75 /* OnboardingFeatureShowcase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingFeatureShowcase.swift; sourceTree = "<group>"; };
 		92C6EB9FDA48ADF425A116A9 /* PermissionOverlayWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionOverlayWindowController.swift; sourceTree = "<group>"; };
+		93F14CD985C5089F212A14DF /* CotypistImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CotypistImporter.swift; path = Cotabby/Services/Utilities/CotypistImporter.swift; sourceTree = SOURCE_ROOT; };
 		944065A858D9BC936CB12B23 /* LlamaRuntimeCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlamaRuntimeCore.swift; sourceTree = "<group>"; };
 		9458F0820B3161FE9CF1DDAF /* GhostFontSizeStabilizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhostFontSizeStabilizer.swift; sourceTree = "<group>"; };
 		95E4475AB02234E3091EB22D /* TrailingDuplicationFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrailingDuplicationFilter.swift; path = Cotabby/Support/TrailingDuplicationFilter.swift; sourceTree = SOURCE_ROOT; };
@@ -826,6 +829,7 @@
 				2BF54DEB8EC47F9D370B453D /* ExtendedHardwareProbe.swift */,
 				271A43F588F0E86C03DFDBD6 /* ModelFitEvaluator.swift */,
 				AFD34462B9E60407234724E3 /* ModelPerformanceTracker.swift */,
+				93F14CD985C5089F212A14DF /* CotypistImporter.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -1194,6 +1198,7 @@
 				27924671970F3DF53C698750 /* ExtendedHardwareProbe.swift in Sources */,
 				A38D4A01B0C9ACAC9094A032 /* ModelFitEvaluator.swift in Sources */,
 				E6394011B7056E28034E3D76 /* ModelPerformanceTracker.swift in Sources */,
+				CCE54775A06559D85A9B2A69 /* CotypistImporter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1263,6 +1268,7 @@
 				25774A65B9182C1E76F7A4A2 /* TypoDetector.swift in Sources */,
 				AA984F73895BC0EB3309BAE3 /* PersonalizationEngine.swift in Sources */,
 				1F654560B1F07541FB814B20 /* InputHistoryStore.swift in Sources */,
+				4E564DB8824966680175F91A /* CotypistImporter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
