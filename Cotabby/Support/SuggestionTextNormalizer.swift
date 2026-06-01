@@ -96,9 +96,18 @@ enum SuggestionTextNormalizer {
         // When preceding text does NOT end with whitespace, the model's leading space (or the
         // inter-word space exposed by echo suppression) passes through — it's the word boundary
         // the user needs.
-        if let lastScalar = request.context.precedingText.unicodeScalars.last,
-           CharacterSet.whitespaces.contains(lastScalar) {
-            normalized = String(normalized.drop(while: { $0.isWhitespace }))
+        //
+        // HOWEVER: if the preceding text ends mid-word (last character is alphanumeric) and the
+        // completion starts with a space, the space is a FIM artifact that would insert a gap
+        // mid-word (e.g. "des" + " cription" → "des cription"). Strip it so the continuation
+        // attaches cleanly to the partial word.
+        if let lastScalar = request.context.precedingText.unicodeScalars.last {
+            if CharacterSet.whitespaces.contains(lastScalar) {
+                normalized = String(normalized.drop(while: { $0.isWhitespace }))
+            } else if CharacterSet.alphanumerics.contains(lastScalar),
+                      normalized.first?.isWhitespace == true {
+                normalized = String(normalized.drop(while: { $0.isWhitespace }))
+            }
         }
 
         // Final safety gate: never surface control characters, replacement glyphs, or
