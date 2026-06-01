@@ -76,6 +76,18 @@ final class SuggestionSettingsModel: ObservableObject {
     /// 0.0 = off, 1.0 = max. Controls how strongly word-choice personalization biases suggestions
     /// toward the user's historical vocabulary.
     @Published private(set) var personalizationStrength: Double
+    /// When true, single-word completions include a trailing space so you can immediately type the next word.
+    @Published private(set) var includeTrailingSpace: Bool
+    /// When true, show completions even when there is text after the cursor on the same line (Labs).
+    @Published private(set) var isMidLineCompletionEnabled: Bool
+    /// Key code for the force-activate (manual invoke) shortcut.
+    @Published private(set) var forceActivateKeyCode: CGKeyCode
+    @Published private(set) var forceActivateKeyModifiers: ShortcutModifierMask
+    @Published private(set) var forceActivateKeyLabel: String
+    /// Key code for temporarily toggling completions in the current app.
+    @Published private(set) var tempToggleKeyCode: CGKeyCode
+    @Published private(set) var tempToggleKeyModifiers: ShortcutModifierMask
+    @Published private(set) var tempToggleKeyLabel: String
     @Published private(set) var acceptanceKeyCode: CGKeyCode
     @Published private(set) var acceptanceKeyModifiers: ShortcutModifierMask
     @Published private(set) var acceptanceKeyLabel: String
@@ -125,15 +137,23 @@ final class SuggestionSettingsModel: ObservableObject {
     private static let typoCorrectionDisplayEnabledDefaultsKey = "cotabbyTypoCorrectionDisplayEnabled"
     private static let inputStorageEnabledDefaultsKey = "cotabbyInputStorageEnabled"
     private static let personalizationStrengthDefaultsKey = "cotabbyPersonalizationStrength"
+    private static let includeTrailingSpaceDefaultsKey = "cotabbyIncludeTrailingSpace"
+    private static let midLineCompletionEnabledDefaultsKey = "cotabbyMidLineCompletionEnabled"
+    private static let forceActivateKeyCodeDefaultsKey = "cotabbyForceActivateKeyCode"
+    private static let forceActivateKeyModifiersDefaultsKey = "cotabbyForceActivateKeyModifiers"
+    private static let forceActivateKeyLabelDefaultsKey = "cotabbyForceActivateKeyLabel"
+    private static let tempToggleKeyCodeDefaultsKey = "cotabbyTempToggleKeyCode"
+    private static let tempToggleKeyModifiersDefaultsKey = "cotabbyTempToggleKeyModifiers"
+    private static let tempToggleKeyLabelDefaultsKey = "cotabbyTempToggleKeyLabel"
+    private static let globalToggleKeyCodeDefaultsKey = "cotabbyGlobalToggleKeyCode"
+    private static let globalToggleKeyModifiersDefaultsKey = "cotabbyGlobalToggleKeyModifiers"
+    private static let globalToggleKeyLabelDefaultsKey = "cotabbyGlobalToggleKeyLabel"
     private static let acceptanceKeyCodeDefaultsKey = "cotabbyAcceptanceKeyCode"
     private static let acceptanceKeyModifiersDefaultsKey = "cotabbyAcceptanceKeyModifiers"
     private static let acceptanceKeyLabelDefaultsKey = "cotabbyAcceptanceKeyLabel"
     private static let fullAcceptanceKeyCodeDefaultsKey = "cotabbyFullAcceptanceKeyCode"
     private static let fullAcceptanceKeyModifiersDefaultsKey = "cotabbyFullAcceptanceKeyModifiers"
     private static let fullAcceptanceKeyLabelDefaultsKey = "cotabbyFullAcceptanceKeyLabel"
-    private static let globalToggleKeyCodeDefaultsKey = "cotabbyGlobalToggleKeyCode"
-    private static let globalToggleKeyModifiersDefaultsKey = "cotabbyGlobalToggleKeyModifiers"
-    private static let globalToggleKeyLabelDefaultsKey = "cotabbyGlobalToggleKeyLabel"
     private static let acceptanceGranularityDefaultsKey = "cotabbyAcceptanceGranularity"
 
     static let defaultAcceptanceKeyCode: CGKeyCode = 48
@@ -293,6 +313,26 @@ final class SuggestionSettingsModel: ObservableObject {
             userDefaults.object(forKey: Self.inputStorageEnabledDefaultsKey) as? Bool ?? false
         let resolvedPersonalizationStrength =
             userDefaults.object(forKey: Self.personalizationStrengthDefaultsKey) as? Double ?? 0.0
+        let resolvedIncludeTrailingSpace =
+            userDefaults.object(forKey: Self.includeTrailingSpaceDefaultsKey) as? Bool ?? true
+        let resolvedMidLineCompletionEnabled =
+            userDefaults.object(forKey: Self.midLineCompletionEnabledDefaultsKey) as? Bool ?? false
+
+        let resolvedForceActivateKeyCode = CGKeyCode(
+            userDefaults.object(forKey: Self.forceActivateKeyCodeDefaultsKey) as? Int ?? 0
+        )
+        let resolvedForceActivateKeyModifiers = ShortcutModifierMask(
+            rawValue: UInt32(userDefaults.object(forKey: Self.forceActivateKeyModifiersDefaultsKey) as? Int ?? 0)
+        )
+        let resolvedForceActivateKeyLabel = userDefaults.string(forKey: Self.forceActivateKeyLabelDefaultsKey) ?? ""
+
+        let resolvedTempToggleKeyCode = CGKeyCode(
+            userDefaults.object(forKey: Self.tempToggleKeyCodeDefaultsKey) as? Int ?? 0
+        )
+        let resolvedTempToggleKeyModifiers = ShortcutModifierMask(
+            rawValue: UInt32(userDefaults.object(forKey: Self.tempToggleKeyModifiersDefaultsKey) as? Int ?? 0)
+        )
+        let resolvedTempToggleKeyLabel = userDefaults.string(forKey: Self.tempToggleKeyLabelDefaultsKey) ?? ""
 
         let resolvedAcceptanceKeyCode = CGKeyCode(
             userDefaults.object(forKey: Self.acceptanceKeyCodeDefaultsKey) as? Int
@@ -363,6 +403,14 @@ final class SuggestionSettingsModel: ObservableObject {
         isTypoCorrectionDisplayEnabled = resolvedTypoCorrectionDisplayEnabled
         isInputStorageEnabled = resolvedInputStorageEnabled
         personalizationStrength = resolvedPersonalizationStrength
+        includeTrailingSpace = resolvedIncludeTrailingSpace
+        isMidLineCompletionEnabled = resolvedMidLineCompletionEnabled
+        forceActivateKeyCode = resolvedForceActivateKeyCode
+        forceActivateKeyModifiers = resolvedForceActivateKeyModifiers
+        forceActivateKeyLabel = resolvedForceActivateKeyLabel
+        tempToggleKeyCode = resolvedTempToggleKeyCode
+        tempToggleKeyModifiers = resolvedTempToggleKeyModifiers
+        tempToggleKeyLabel = resolvedTempToggleKeyLabel
         acceptanceKeyCode = resolvedAcceptanceKeyCode
         acceptanceKeyModifiers = resolvedAcceptanceKeyModifiers
         acceptanceKeyLabel = resolvedAcceptanceKeyLabel
@@ -446,7 +494,9 @@ final class SuggestionSettingsModel: ObservableObject {
             isTypoSuppressionEnabled: isTypoSuppressionEnabled,
             isTypoCorrectionDisplayEnabled: isTypoCorrectionDisplayEnabled,
             isInputStorageEnabled: isInputStorageEnabled,
-            personalizationStrength: personalizationStrength
+            personalizationStrength: personalizationStrength,
+            includeTrailingSpace: includeTrailingSpace,
+            isMidLineCompletionEnabled: isMidLineCompletionEnabled
         )
     }
 
@@ -587,6 +637,45 @@ final class SuggestionSettingsModel: ObservableObject {
         guard personalizationStrength != clamped else { return }
         personalizationStrength = clamped
         userDefaults.set(clamped, forKey: Self.personalizationStrengthDefaultsKey)
+    }
+
+    func setIncludeTrailingSpace(_ enabled: Bool) {
+        guard includeTrailingSpace != enabled else { return }
+        includeTrailingSpace = enabled
+        userDefaults.set(enabled, forKey: Self.includeTrailingSpaceDefaultsKey)
+    }
+
+    func setMidLineCompletionEnabled(_ enabled: Bool) {
+        guard isMidLineCompletionEnabled != enabled else { return }
+        isMidLineCompletionEnabled = enabled
+        userDefaults.set(enabled, forKey: Self.midLineCompletionEnabledDefaultsKey)
+    }
+
+    func setForceActivateShortcut(keyCode: CGKeyCode, modifiers: ShortcutModifierMask, label: String) {
+        forceActivateKeyCode = keyCode
+        forceActivateKeyModifiers = modifiers
+        forceActivateKeyLabel = label
+        userDefaults.set(Int(keyCode), forKey: Self.forceActivateKeyCodeDefaultsKey)
+        userDefaults.set(Int(modifiers.rawValue), forKey: Self.forceActivateKeyModifiersDefaultsKey)
+        userDefaults.set(label, forKey: Self.forceActivateKeyLabelDefaultsKey)
+    }
+
+    func setTempToggleShortcut(keyCode: CGKeyCode, modifiers: ShortcutModifierMask, label: String) {
+        tempToggleKeyCode = keyCode
+        tempToggleKeyModifiers = modifiers
+        tempToggleKeyLabel = label
+        userDefaults.set(Int(keyCode), forKey: Self.tempToggleKeyCodeDefaultsKey)
+        userDefaults.set(Int(modifiers.rawValue), forKey: Self.tempToggleKeyModifiersDefaultsKey)
+        userDefaults.set(label, forKey: Self.tempToggleKeyLabelDefaultsKey)
+    }
+
+    func setGlobalToggleShortcut(keyCode: CGKeyCode, modifiers: ShortcutModifierMask, label: String) {
+        globalToggleKeyCode = keyCode
+        globalToggleKeyModifiers = modifiers
+        globalToggleKeyLabel = label
+        userDefaults.set(Int(keyCode), forKey: Self.globalToggleKeyCodeDefaultsKey)
+        userDefaults.set(Int(modifiers.rawValue), forKey: Self.globalToggleKeyModifiersDefaultsKey)
+        userDefaults.set(label, forKey: Self.globalToggleKeyLabelDefaultsKey)
     }
 
     func setAcceptanceGranularity(_ granularity: AcceptanceGranularity) {
@@ -1203,7 +1292,9 @@ extension SuggestionSettingsModel: SuggestionSettingsProviding {
                     isTypoSuppressionEnabled: self.isTypoSuppressionEnabled,
                     isTypoCorrectionDisplayEnabled: self.isTypoCorrectionDisplayEnabled,
                     isInputStorageEnabled: self.isInputStorageEnabled,
-                    personalizationStrength: self.personalizationStrength
+                    personalizationStrength: self.personalizationStrength,
+                    includeTrailingSpace: self.includeTrailingSpace,
+                    isMidLineCompletionEnabled: self.isMidLineCompletionEnabled
                 )
             }
             .removeDuplicates()

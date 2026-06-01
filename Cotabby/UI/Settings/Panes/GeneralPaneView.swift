@@ -149,6 +149,52 @@ struct GeneralPaneView: View {
                 }
             }
 
+            // MARK: – Typing Behavior
+
+            Section("Typing Behavior") {
+                Toggle("Include trailing space", isOn: trailingSpaceBinding)
+                Text("When enabled, single-word completions include a trailing space so you can immediately continue typing the next word.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // MARK: – Shortcuts
+
+            Section("Shortcuts") {
+                LabeledContent("Force-activate completions") {
+                    Text(suggestionSettings.forceActivateKeyLabel.isEmpty ? "Not set" : suggestionSettings.forceActivateKeyLabel)
+                        .foregroundStyle(.secondary)
+                }
+                Text("In cases where completions are not triggered automatically, use this shortcut to manually invoke them.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                LabeledContent("Toggle completions in current app") {
+                    Text(suggestionSettings.tempToggleKeyLabel.isEmpty ? "Not set" : suggestionSettings.tempToggleKeyLabel)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Quickly turns completions off for a few minutes in the current application, or back on if currently disabled.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                LabeledContent("Toggle completions globally") {
+                    Text(suggestionSettings.globalToggleKeyLabel.isEmpty ? "Not set" : suggestionSettings.globalToggleKeyLabel)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Disables completions everywhere until you press the shortcut again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // MARK: – Labs
+
+            Section("Labs") {
+                Toggle("Enable mid-line completions", isOn: midLineCompletionBinding)
+                Text("Show completions even when there is text after the cursor on the same line. Completions will continue your current sentence forward from the cursor rather than filling in gaps between existing text.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if suggestionSettings.isEmojiPickerEnabled {
                 Section("Emoji Suggestions") {
                     LabeledContent {
@@ -367,6 +413,20 @@ struct GeneralPaneView: View {
         Binding(
             get: { suggestionSettings.personalizationStrength },
             set: { suggestionSettings.setPersonalizationStrength($0) }
+        )
+    }
+
+    private var trailingSpaceBinding: Binding<Bool> {
+        Binding(
+            get: { suggestionSettings.includeTrailingSpace },
+            set: { suggestionSettings.setIncludeTrailingSpace($0) }
+        )
+    }
+
+    private var midLineCompletionBinding: Binding<Bool> {
+        Binding(
+            get: { suggestionSettings.isMidLineCompletionEnabled },
+            set: { suggestionSettings.setMidLineCompletionEnabled($0) }
         )
     }
 

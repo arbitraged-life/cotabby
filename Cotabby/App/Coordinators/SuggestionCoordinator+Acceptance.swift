@@ -91,7 +91,16 @@ extension SuggestionCoordinator {
         case let .ready(preparedLiveContext, preparedSession, preparedAcceptedChunk):
             liveContext = preparedLiveContext
             sessionForAcceptance = preparedSession
-            acceptedChunk = preparedAcceptedChunk
+            // Append trailing space for single-word acceptance when enabled.
+            if !fullText,
+               settingsSnapshot.includeTrailingSpace,
+               settingsSnapshot.acceptanceGranularity == .word,
+               !preparedAcceptedChunk.hasSuffix(" "),
+               !preparedAcceptedChunk.isEmpty {
+                acceptedChunk = preparedAcceptedChunk + " "
+            } else {
+                acceptedChunk = preparedAcceptedChunk
+            }
 
         case let .invalid(reason):
             return passTabThrough(reason: reason)

@@ -320,8 +320,11 @@ extension SuggestionCoordinator {
         guard liveContext.selection.length == 0 else {
             return nil
         }
-        guard liveContext.trailingText == requestContext.trailingText else {
-            return nil
+        // When mid-line completions are enabled, skip the trailing-text equality check.
+        if !settingsSnapshot.isMidLineCompletionEnabled {
+            guard liveContext.trailingText == requestContext.trailingText else {
+                return nil
+            }
         }
 
         return StaleCompletionReconciler.reconcile(

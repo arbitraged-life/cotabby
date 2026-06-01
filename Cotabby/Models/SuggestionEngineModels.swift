@@ -101,4 +101,8 @@ struct SuggestionSettingsSnapshot: Equatable, Sendable {
     let isInputStorageEnabled: Bool
     /// Personalization strength: 0.0 = off, 1.0 = max word-choice bias.
     let personalizationStrength: Double
+    /// When true, single-word completions include a trailing space.
+    let includeTrailingSpace: Bool
+    /// When true, show completions even with text after cursor (Labs).
+    let isMidLineCompletionEnabled: Bool
 }
