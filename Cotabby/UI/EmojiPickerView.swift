@@ -72,7 +72,8 @@ struct EmojiPickerView: View {
                             EmojiPickerRow(
                                 match: model.matches[index],
                                 isSelected: index == model.selectedIndex,
-                                acceptKeyLabel: index == model.selectedIndex ? model.acceptKeyLabel : nil
+                                acceptKeyLabel: index == model.selectedIndex ? model.acceptKeyLabel : nil,
+                                shortcutNumber: index < 9 ? index + 1 : nil
                             )
                             .id(index)
                             .contentShape(Rectangle())
@@ -94,9 +95,16 @@ private struct EmojiPickerRow: View {
     let match: EmojiMatch
     let isSelected: Bool
     let acceptKeyLabel: String?
+    let shortcutNumber: Int?
 
     var body: some View {
         HStack(spacing: 8) {
+            if let shortcutNumber {
+                Text("\(shortcutNumber)")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.7) : Color.secondary.opacity(0.6))
+                    .frame(width: 12)
+            }
             Text(match.glyph)
                 .font(.system(size: 18))
             Text(":\(match.primaryAlias):")

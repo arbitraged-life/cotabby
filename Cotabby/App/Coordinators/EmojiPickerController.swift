@@ -108,6 +108,21 @@ final class EmojiPickerController {
         }
 
         let wasCapturing = machine.isCapturing
+
+        // Number keys 1–9 commit directly when capturing with matches in range.
+        // This gives Cotypist-style numbered shortcuts. (#393)
+        if wasCapturing,
+           event.characters.count == 1,
+           let char = event.characters.first,
+           char.isASCII,
+           let digit = char.wholeNumberValue,
+           digit >= 1, digit <= min(9, matches.count) {
+            selectedIndex = digit - 1
+            commitSelectedMatch()
+            pendingDecision = PendingDecision(keyCode: event.keyCode, consume: true)
+            return true
+        }
+
         let output = machine.reduce(triggerInput(for: event), selectableMatchCount: matches.count)
         applyActions(output.actions)
 
