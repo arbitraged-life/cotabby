@@ -93,4 +93,12 @@ struct SuggestionSettingsSnapshot: Equatable, Sendable {
     /// How much of the buffered suggestion the primary accept key takes per press. Read once per
     /// accept call so a mid-press setting change can't strand a partially-handled press.
     let acceptanceGranularity: AcceptanceGranularity
+    /// When true, suppress completions when the current word is likely a typo.
+    let isTypoSuppressionEnabled: Bool
+    /// When true (and typo suppression is on), show the correction inline.
+    let isTypoCorrectionDisplayEnabled: Bool
+    /// When true, store all typed text to build a personalization dataset.
+    let isInputStorageEnabled: Bool
+    /// Personalization strength: 0.0 = off, 1.0 = max word-choice bias.
+    let personalizationStrength: Double
 }

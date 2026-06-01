@@ -67,6 +67,15 @@ final class SuggestionSettingsModel: ObservableObject {
     @Published private(set) var autoAcceptTrailingPunctuation: Bool
     /// Number of tree decode candidates to generate (1 = disabled, 2-4 = enabled).
     @Published private(set) var treeCandidateCount: Int
+    /// When true, suppress completions when the current word is likely a typo.
+    @Published private(set) var isTypoSuppressionEnabled: Bool
+    /// When true (and typo suppression is on), show the correction inline as a strikethrough hint.
+    @Published private(set) var isTypoCorrectionDisplayEnabled: Bool
+    /// When true, store all typed text (even without accepted completions) to build a history dataset.
+    @Published private(set) var isInputStorageEnabled: Bool
+    /// 0.0 = off, 1.0 = max. Controls how strongly word-choice personalization biases suggestions
+    /// toward the user's historical vocabulary.
+    @Published private(set) var personalizationStrength: Double
     @Published private(set) var acceptanceKeyCode: CGKeyCode
     @Published private(set) var acceptanceKeyModifiers: ShortcutModifierMask
     @Published private(set) var acceptanceKeyLabel: String
@@ -112,6 +121,10 @@ final class SuggestionSettingsModel: ObservableObject {
     private static let preferredEmojiGenderDefaultsKey = "cotabbyPreferredEmojiGender"
     private static let autoAcceptTrailingPunctuationDefaultsKey = "cotabbyAutoAcceptTrailingPunctuation"
     private static let treeCandidateCountDefaultsKey = "cotabbyTreeCandidateCount"
+    private static let typoSuppressionEnabledDefaultsKey = "cotabbyTypoSuppressionEnabled"
+    private static let typoCorrectionDisplayEnabledDefaultsKey = "cotabbyTypoCorrectionDisplayEnabled"
+    private static let inputStorageEnabledDefaultsKey = "cotabbyInputStorageEnabled"
+    private static let personalizationStrengthDefaultsKey = "cotabbyPersonalizationStrength"
     private static let acceptanceKeyCodeDefaultsKey = "cotabbyAcceptanceKeyCode"
     private static let acceptanceKeyModifiersDefaultsKey = "cotabbyAcceptanceKeyModifiers"
     private static let acceptanceKeyLabelDefaultsKey = "cotabbyAcceptanceKeyLabel"
@@ -272,6 +285,14 @@ final class SuggestionSettingsModel: ObservableObject {
         let resolvedTreeCandidateCount = max(1, min(4,
             userDefaults.object(forKey: Self.treeCandidateCountDefaultsKey) as? Int ?? 1
         ))
+        let resolvedTypoSuppressionEnabled =
+            userDefaults.object(forKey: Self.typoSuppressionEnabledDefaultsKey) as? Bool ?? false
+        let resolvedTypoCorrectionDisplayEnabled =
+            userDefaults.object(forKey: Self.typoCorrectionDisplayEnabledDefaultsKey) as? Bool ?? false
+        let resolvedInputStorageEnabled =
+            userDefaults.object(forKey: Self.inputStorageEnabledDefaultsKey) as? Bool ?? false
+        let resolvedPersonalizationStrength =
+            userDefaults.object(forKey: Self.personalizationStrengthDefaultsKey) as? Double ?? 0.0
 
         let resolvedAcceptanceKeyCode = CGKeyCode(
             userDefaults.object(forKey: Self.acceptanceKeyCodeDefaultsKey) as? Int
@@ -338,6 +359,10 @@ final class SuggestionSettingsModel: ObservableObject {
         preferredEmojiGender = resolvedPreferredEmojiGender
         autoAcceptTrailingPunctuation = resolvedAutoAcceptTrailingPunctuation
         treeCandidateCount = resolvedTreeCandidateCount
+        isTypoSuppressionEnabled = resolvedTypoSuppressionEnabled
+        isTypoCorrectionDisplayEnabled = resolvedTypoCorrectionDisplayEnabled
+        isInputStorageEnabled = resolvedInputStorageEnabled
+        personalizationStrength = resolvedPersonalizationStrength
         acceptanceKeyCode = resolvedAcceptanceKeyCode
         acceptanceKeyModifiers = resolvedAcceptanceKeyModifiers
         acceptanceKeyLabel = resolvedAcceptanceKeyLabel
@@ -417,7 +442,11 @@ final class SuggestionSettingsModel: ObservableObject {
             autoAcceptTrailingPunctuation: autoAcceptTrailingPunctuation,
             isFastModeEnabled: isFastModeEnabled,
             mirrorPreference: mirrorPreference,
-            acceptanceGranularity: acceptanceGranularity
+            acceptanceGranularity: acceptanceGranularity,
+            isTypoSuppressionEnabled: isTypoSuppressionEnabled,
+            isTypoCorrectionDisplayEnabled: isTypoCorrectionDisplayEnabled,
+            isInputStorageEnabled: isInputStorageEnabled,
+            personalizationStrength: personalizationStrength
         )
     }
 
@@ -533,6 +562,31 @@ final class SuggestionSettingsModel: ObservableObject {
         guard treeCandidateCount != clamped else { return }
         treeCandidateCount = clamped
         userDefaults.set(clamped, forKey: Self.treeCandidateCountDefaultsKey)
+    }
+
+    func setTypoSuppressionEnabled(_ enabled: Bool) {
+        guard isTypoSuppressionEnabled != enabled else { return }
+        isTypoSuppressionEnabled = enabled
+        userDefaults.set(enabled, forKey: Self.typoSuppressionEnabledDefaultsKey)
+    }
+
+    func setTypoCorrectionDisplayEnabled(_ enabled: Bool) {
+        guard isTypoCorrectionDisplayEnabled != enabled else { return }
+        isTypoCorrectionDisplayEnabled = enabled
+        userDefaults.set(enabled, forKey: Self.typoCorrectionDisplayEnabledDefaultsKey)
+    }
+
+    func setInputStorageEnabled(_ enabled: Bool) {
+        guard isInputStorageEnabled != enabled else { return }
+        isInputStorageEnabled = enabled
+        userDefaults.set(enabled, forKey: Self.inputStorageEnabledDefaultsKey)
+    }
+
+    func setPersonalizationStrength(_ strength: Double) {
+        let clamped = max(0.0, min(1.0, strength))
+        guard personalizationStrength != clamped else { return }
+        personalizationStrength = clamped
+        userDefaults.set(clamped, forKey: Self.personalizationStrengthDefaultsKey)
     }
 
     func setAcceptanceGranularity(_ granularity: AcceptanceGranularity) {
@@ -1145,7 +1199,11 @@ extension SuggestionSettingsModel: SuggestionSettingsProviding {
                     autoAcceptTrailingPunctuation: autoAcceptPunctuation,
                     isFastModeEnabled: fastModeEnabled,
                     mirrorPreference: mirrorPreference,
-                    acceptanceGranularity: granularity
+                    acceptanceGranularity: granularity,
+                    isTypoSuppressionEnabled: self.isTypoSuppressionEnabled,
+                    isTypoCorrectionDisplayEnabled: self.isTypoCorrectionDisplayEnabled,
+                    isInputStorageEnabled: self.isInputStorageEnabled,
+                    personalizationStrength: self.personalizationStrength
                 )
             }
             .removeDuplicates()

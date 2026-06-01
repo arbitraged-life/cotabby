@@ -70,6 +70,22 @@ extension SuggestionCoordinator {
             return
         }
 
+        // Typo suppression: if enabled, check the current word for misspelling.
+        if settingsSnapshot.isTypoSuppressionEnabled,
+           let currentWord = TypoDetector.currentWord(from: rawContext.precedingText) {
+            let typoResult = TypoDetector.check(word: currentWord)
+            if typoResult.isTypo {
+                clearSuggestion()
+                if settingsSnapshot.isTypoCorrectionDisplayEnabled, let fix = typoResult.corrections.first {
+                    showTypoCorrection(typo: currentWord, correction: fix)
+                } else {
+                    hideOverlay(reason: "Overlay hidden because a typo was detected in the current word.")
+                }
+                state = .idle
+                return
+            }
+        }
+
         let context = interactionState.materializeContext(from: rawContext)
         let visualContextSummary = visualContextCoordinator.excerpt(for: context)
         let rawClipboard = settingsSnapshot.isClipboardContextEnabled

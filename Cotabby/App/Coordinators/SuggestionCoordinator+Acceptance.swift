@@ -347,6 +347,17 @@ extension SuggestionCoordinator {
         clearDiagnostics: Bool = true
     ) {
         CotabbyLogger.suggestion.debug("Invalidating active suggestion: \(reason)")
+
+        // Record input for personalization when enabled (even without acceptance).
+        if settingsSnapshot.isInputStorageEnabled,
+           let rawContext = focusModel.snapshot.context {
+            InputHistoryStore.shared.record(
+                text: rawContext.precedingText,
+                appBundleID: rawContext.bundleIdentifier,
+                hadAcceptedCompletion: false
+            )
+        }
+
         cancelPredictionWork()
         clearSuggestion(clearDiagnostics: clearDiagnostics)
         hideOverlay(reason: reason)
@@ -500,6 +511,20 @@ extension SuggestionCoordinator {
 
     func hideOverlay(reason: String) {
         latestOverlayMessage = overlayPresenter.hide(reason: reason)
+    }
+
+    /// Shows a typo correction hint via the overlay (strikethrough typo + fix).
+    func showTypoCorrection(typo: String, correction: String) {
+        // Display the correction as a ghost suggestion: "→ correction"
+        // Reuses the normal overlay path with the correction text.
+        if let rawContext = focusModel.snapshot.context {
+            let context = interactionState.materializeContext(from: rawContext)
+            presentOverlay(
+                text: "→ \(correction)",
+                at: rawContext.caretRect,
+                context: context
+            )
+        }
     }
 
     // MARK: - Alternative Cycling

@@ -106,6 +106,47 @@ struct GeneralPaneView: View {
                     in: 1...4
                 )
                 .help("Generate multiple suggestion candidates (⌥] / ⌥[ to cycle). Uses more memory and latency.")
+
+                Divider()
+
+                Toggle(isOn: typoSuppressionBinding) {
+                    SettingsRowLabel(
+                        title: "Don't Show Completions When Typo Suspected",
+                        description: "Hides the completion when Cotabby suspects a typo in the word you're currently typing. It only ever looks at the current word and may occasionally miss or misjudge a typo. It is not a substitute for a full spell-checker."
+                    )
+                }
+
+                if suggestionSettings.isTypoSuppressionEnabled {
+                    Toggle(isOn: typoCorrectionDisplayBinding) {
+                        SettingsRowLabel(
+                            title: "Show Suggested Fixes",
+                            description: "When a likely correction is available, show it inline as a strikethrough on the typo with the fix next to it."
+                        )
+                    }
+                    .padding(.leading, 16)
+                }
+
+                Divider()
+
+                Toggle(isOn: inputStorageBinding) {
+                    SettingsRowLabel(
+                        title: "Store Inputs Without Accepted Completions",
+                        description: "When enabled, Cotabby will store all inputs in text fields it monitors, even when you don't accept any completions. This helps build a more comprehensive dataset of your writing. When disabled, only inputs where you accepted at least one completion will be stored."
+                    )
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Personalize Word Choice")
+                        Spacer()
+                        Text(suggestionSettings.personalizationStrength == 0 ? "Off" : String(format: "%.0f%%", suggestionSettings.personalizationStrength * 100))
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: personalizationStrengthBinding, in: 0...1, step: 0.1)
+                    Text("Uses your typing history to slightly favor the words and phrases you prefer. Subtle at lower values; too high may occasionally suggest a less fitting word.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             if suggestionSettings.isEmojiPickerEnabled {
@@ -298,6 +339,34 @@ struct GeneralPaneView: View {
         Binding(
             get: { suggestionSettings.treeCandidateCount },
             set: { suggestionSettings.setTreeCandidateCount($0) }
+        )
+    }
+
+    private var typoSuppressionBinding: Binding<Bool> {
+        Binding(
+            get: { suggestionSettings.isTypoSuppressionEnabled },
+            set: { suggestionSettings.setTypoSuppressionEnabled($0) }
+        )
+    }
+
+    private var typoCorrectionDisplayBinding: Binding<Bool> {
+        Binding(
+            get: { suggestionSettings.isTypoCorrectionDisplayEnabled },
+            set: { suggestionSettings.setTypoCorrectionDisplayEnabled($0) }
+        )
+    }
+
+    private var inputStorageBinding: Binding<Bool> {
+        Binding(
+            get: { suggestionSettings.isInputStorageEnabled },
+            set: { suggestionSettings.setInputStorageEnabled($0) }
+        )
+    }
+
+    private var personalizationStrengthBinding: Binding<Double> {
+        Binding(
+            get: { suggestionSettings.personalizationStrength },
+            set: { suggestionSettings.setPersonalizationStrength($0) }
         )
     }
 
