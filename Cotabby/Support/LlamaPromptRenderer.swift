@@ -18,6 +18,7 @@ enum LlamaPromptRenderer {
     /// rules travel through one prompt contract instead of drifting across separate modes.
     static func prompt(
         prefixText: String,
+        suffixText: String? = nil,
         applicationName: String,
         completionLengthInstruction: String,
         userName: String?,
@@ -84,6 +85,16 @@ enum LlamaPromptRenderer {
         }
 
         _ = completionLengthInstruction
+        // Suffix context (text after the caret) helps the model understand what already follows
+        // the cursor so it can produce a more contextually-aware continuation rather than
+        // diverging from what the user has written further down.
+        if let suffixText, !suffixText.isEmpty {
+            sentences.append(
+                "Text that already exists after the cursor (do not repeat or restate it, "
+                    + "just use it to understand the context): \(suffixText)"
+            )
+        }
+
         // The declared-language hint sits last among the instructions (highest attention, right
         // before the prefix) — without it small models drift to English when the surrounding text is
         // short or ambiguous.
@@ -120,6 +131,7 @@ enum LlamaPromptRenderer {
     /// scaffolding leak. The framing mirrors `FoundationModelPromptRenderer`: continue, do not converse.
     static func messages(
         prefixText: String,
+        suffixText: String? = nil,
         applicationName: String,
         completionLengthInstruction: String,
         userName: String?,
@@ -181,6 +193,12 @@ enum LlamaPromptRenderer {
         // Length is governed by the token budget for the local path (see `prompt(...)`), so the
         // explicit word-range cue stays omitted here too; the parameter is kept wired for symmetry.
         _ = completionLengthInstruction
+        if let suffixText, !suffixText.isEmpty {
+            sentences.append(
+                "Text that already exists after the cursor (do not repeat or restate it, "
+                    + "just use it to understand the context): \(suffixText)"
+            )
+        }
         if let languageInstruction, !languageInstruction.isEmpty {
             sentences.append(languageInstruction)
         }

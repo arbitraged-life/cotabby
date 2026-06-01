@@ -130,6 +130,8 @@ struct SettingsContainerView: View {
             )
         case .about:
             AboutPaneView(appUpdateManager: appUpdateManager)
+        case .analytics:
+            AnalyticsPaneView()
         }
     }
 

@@ -277,6 +277,7 @@ extension SuggestionCoordinator {
             latency: result.latency,
             alternatives: result.alternatives
         )
+        UsageAnalytics.shared.recordSuggestionShown()
         applySessionDiagnostics(session, acceptanceAction: "Generated new suggestion.")
         state = .ready(text: session.remainingText, latency: session.latency)
 

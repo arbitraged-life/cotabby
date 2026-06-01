@@ -135,6 +135,7 @@ extension SuggestionCoordinator {
         }
 
         recordAcceptedWords(from: acceptedChunk)
+        UsageAnalytics.shared.recordAcceptance(text: acceptedChunk)
 
         cancelPredictionWork()
 
@@ -365,6 +366,11 @@ extension SuggestionCoordinator {
                 appBundleID: rawContext.bundleIdentifier,
                 hadAcceptedCompletion: false
             )
+        }
+
+        // Track rejection only when there was an active suggestion visible.
+        if case .ready = state {
+            UsageAnalytics.shared.recordRejection()
         }
 
         cancelPredictionWork()

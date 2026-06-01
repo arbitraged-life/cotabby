@@ -67,7 +67,7 @@ enum SettingsAttentionEvaluator {
                 return reason
             }
 
-        case .general, .writing, .advanced, .shortcuts, .apps, .performance, .about:
+        case .general, .writing, .advanced, .shortcuts, .apps, .performance, .analytics, .about:
             return nil
         }
     }
