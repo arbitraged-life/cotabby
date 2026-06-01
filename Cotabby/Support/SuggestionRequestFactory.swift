@@ -153,6 +153,11 @@ enum SuggestionRequestFactory {
         configuration: SuggestionConfiguration,
         engine: SuggestionEngineKind = .llamaOpenSource
     ) -> String {
+        // Strip U+FFFC (object replacement character) used by Word for embedded figures with
+        // square text wrap. Leaving it in can cause the model to generate continuations that,
+        // when inserted, displace the figure. (#487)
+        let cleanedText = precedingText.replacingOccurrences(of: "\u{FFFC}", with: "")
+
         let maxCharacters: Int
         let maxWords: Int
         switch engine {
@@ -164,7 +169,7 @@ enum SuggestionRequestFactory {
             maxWords = configuration.maxPrefixWords
         }
 
-        let characterWindow = String(precedingText.suffix(maxCharacters))
+        let characterWindow = String(cleanedText.suffix(maxCharacters))
         let trailingWords = characterWindow
             .split(whereSeparator: { $0.isWhitespace })
             .suffix(maxWords)
