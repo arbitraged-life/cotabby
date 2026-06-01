@@ -40,7 +40,7 @@ final class SuggestionEngineRouter {
             CotabbyLogger.suggestion.debug("Routing to Apple Intelligence engine", metadata: metadata)
             do {
                 let result = try await foundationModelEngine.generateSuggestion(for: request)
-                recordPerformanceMetric(modelName: "Apple Intelligence", latency: result.latency)
+                recordPerformanceMetric(modelName: "Apple Intelligence", latency: result.latency, text: result.text)
                 return result
             } catch SuggestionClientError.unsupportedLanguageOrLocale(let message) {
                 CotabbyLogger.suggestion.info(
@@ -58,7 +58,7 @@ final class SuggestionEngineRouter {
         case .llamaOpenSource:
             CotabbyLogger.suggestion.debug("Routing to open-source llama engine", metadata: metadata)
             let result = try await llamaEngine.generateSuggestion(for: request)
-            recordPerformanceMetric(modelName: llamaModelNameProvider() ?? "Llama", latency: result.latency)
+            recordPerformanceMetric(modelName: llamaModelNameProvider() ?? "Llama", latency: result.latency, text: result.text)
             return result
         }
     }
@@ -67,10 +67,23 @@ final class SuggestionEngineRouter {
     /// Performance pane toggle is on. The router is the right home for this seam because it is
     /// the single point that sees a finished `SuggestionResult` and knows which engine produced
     /// it — both engines below would otherwise need to take a dependency on the metrics store.
-    private func recordPerformanceMetric(modelName: String, latency: TimeInterval) {
+    private func recordPerformanceMetric(modelName: String, latency: TimeInterval, text: String = "") {
         guard suggestionSettings.isPerformanceTrackingEnabled else { return }
         let latencyMs = Int((latency * 1000).rounded())
         performanceMetricsStore.record(modelName: modelName, latencyMs: latencyMs)
+
+        // Richer tracking for model comparison view.
+        let tokenEstimate = max(1, text.count / 4)
+        let tokPerSec = latency > 0 ? Double(tokenEstimate) / latency : 0
+        Task { @MainActor in
+            ModelPerformanceTracker.shared.record(
+                modelName: modelName,
+                ttftMs: latencyMs,
+                totalLatencyMs: latencyMs,
+                tokenCount: tokenEstimate,
+                decodeTokensPerSecond: tokPerSec
+            )
+        }
     }
 
     private func engineMetadataLabel(for kind: SuggestionEngineKind) -> String {
@@ -111,7 +124,7 @@ final class SuggestionEngineRouter {
     ) async throws -> SuggestionResult {
         do {
             let result = try await llamaEngine.generateSuggestion(for: request)
-            recordPerformanceMetric(modelName: llamaModelNameProvider() ?? "Llama", latency: result.latency)
+            recordPerformanceMetric(modelName: llamaModelNameProvider() ?? "Llama", latency: result.latency, text: result.text)
             return result
         } catch SuggestionClientError.cancelled {
             throw SuggestionClientError.cancelled

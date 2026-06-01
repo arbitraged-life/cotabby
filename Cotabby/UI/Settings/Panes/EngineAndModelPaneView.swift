@@ -170,9 +170,25 @@ struct EngineAndModelPaneView: View {
 
     @ViewBuilder
     private func installedModelRow(_ model: RuntimeModelOption) -> some View {
+        let modelSizeGB = RuntimeModelCatalog.downloadableModels
+            .first { $0.filename == model.filename }?.approximateSizeInGigabytes ?? 0
+        let fitEval = ModelFitEvaluator.evaluate(
+            modelSizeGB: modelSizeGB,
+            hardware: ExtendedHardwareProbe.current()
+        )
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(model.displayName)
+                HStack(spacing: 4) {
+                    Text(model.displayName)
+                    if fitEval.fitClass != .recommended {
+                        Image(systemName: fitEval.fitClass.systemImage)
+                            .font(.caption)
+                            .foregroundStyle(fitEval.fitClass == .wontFit ? .red : .orange)
+                            .help(fitEval.fitClass == .wontFit
+                                ? "Model likely won't fit in available memory"
+                                : "Model fits but with limited headroom")
+                    }
+                }
 
                 if model.displayName != model.actualModelName {
                     Text(model.actualModelName)

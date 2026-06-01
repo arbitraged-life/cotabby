@@ -43,6 +43,62 @@ struct PerformancePaneView: View {
                     }
                 }
             }
+
+            modelComparisonSection
+        }
+    }
+
+    // MARK: - Model Comparison
+
+    @ObservedObject private var performanceTracker = ModelPerformanceTracker.shared
+
+    @ViewBuilder
+    private var modelComparisonSection: some View {
+        if !performanceTracker.summaries.isEmpty {
+            Section("Model Comparison") {
+                VStack(spacing: 0) {
+                    HStack(spacing: 12) {
+                        Text("Model")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text("Median TTFT")
+                            .frame(width: 90, alignment: .trailing)
+                        Text("Tok/s")
+                            .frame(width: 60, alignment: .trailing)
+                        Text("Requests")
+                            .frame(width: 60, alignment: .trailing)
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 6)
+                    Divider()
+                    ForEach(performanceTracker.summaries) { summary in
+                        HStack(spacing: 12) {
+                            Text(summary.modelName)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text("\(summary.medianTTFTMs) ms")
+                                .frame(width: 90, alignment: .trailing)
+                                .monospacedDigit()
+                            Text(String(format: "%.1f", summary.medianDecodeTokensPerSecond))
+                                .frame(width: 60, alignment: .trailing)
+                                .monospacedDigit()
+                            Text("\(summary.requestCount)")
+                                .frame(width: 60, alignment: .trailing)
+                                .monospacedDigit()
+                        }
+                        .font(.callout)
+                        .padding(.vertical, 4)
+                        Divider().opacity(0.3)
+                    }
+                }
+
+                Button("Clear Comparison Data") {
+                    performanceTracker.clear()
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
         }
     }
 
