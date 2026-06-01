@@ -40,7 +40,16 @@ final class SuggestionEngineRouter {
             CotabbyLogger.suggestion.debug("Routing to Apple Intelligence engine", metadata: metadata)
             do {
                 let result = try await foundationModelEngine.generateSuggestion(for: request)
-                recordPerformanceMetric(modelName: "Apple Intelligence", latency: result.latency, text: result.text)
+                // Apple's nano model has a 4096-token shared context ≈ 16K chars.
+                let contextChars = request.prompt.count + (request.extendedContext?.count ?? 0)
+                let appleCapacity = 16_000 // ~4096 tokens × 4 chars/token
+                recordPerformanceMetric(
+                    modelName: "Apple Intelligence",
+                    latency: result.latency,
+                    text: result.text,
+                    contextCharacters: contextChars,
+                    contextCapacityCharacters: appleCapacity
+                )
                 return result
             } catch SuggestionClientError.unsupportedLanguageOrLocale(let message) {
                 CotabbyLogger.suggestion.info(
@@ -58,7 +67,12 @@ final class SuggestionEngineRouter {
         case .llamaOpenSource:
             CotabbyLogger.suggestion.debug("Routing to open-source llama engine", metadata: metadata)
             let result = try await llamaEngine.generateSuggestion(for: request)
-            recordPerformanceMetric(modelName: llamaModelNameProvider() ?? "Llama", latency: result.latency, text: result.text)
+            recordPerformanceMetric(
+                modelName: llamaModelNameProvider() ?? "Llama",
+                latency: result.latency,
+                text: result.text,
+                contextCharacters: request.prompt.count
+            )
             return result
         }
     }
@@ -67,10 +81,21 @@ final class SuggestionEngineRouter {
     /// Performance pane toggle is on. The router is the right home for this seam because it is
     /// the single point that sees a finished `SuggestionResult` and knows which engine produced
     /// it — both engines below would otherwise need to take a dependency on the metrics store.
-    private func recordPerformanceMetric(modelName: String, latency: TimeInterval, text: String = "") {
+    private func recordPerformanceMetric(
+        modelName: String,
+        latency: TimeInterval,
+        text: String = "",
+        contextCharacters: Int? = nil,
+        contextCapacityCharacters: Int? = nil
+    ) {
         guard suggestionSettings.isPerformanceTrackingEnabled else { return }
         let latencyMs = Int((latency * 1000).rounded())
-        performanceMetricsStore.record(modelName: modelName, latencyMs: latencyMs)
+        performanceMetricsStore.record(
+            modelName: modelName,
+            latencyMs: latencyMs,
+            contextCharacters: contextCharacters,
+            contextCapacityCharacters: contextCapacityCharacters
+        )
 
         // Richer tracking for model comparison view.
         let tokenEstimate = max(1, text.count / 4)

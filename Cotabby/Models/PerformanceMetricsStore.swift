@@ -17,12 +17,35 @@ struct PerformanceMetricEntry: Identifiable, Codable, Equatable, Hashable {
     let timestamp: Date
     let modelName: String
     let latencyMs: Int
+    /// Approximate number of characters sent as context (prefix + suffix + instructions).
+    /// Nil for entries recorded before context tracking was added.
+    let contextCharacters: Int?
+    /// Approximate model context window capacity in characters. When `contextCharacters` exceeds
+    /// this value the prompt was likely truncated by the backend.
+    let contextCapacityCharacters: Int?
 
-    init(id: UUID = UUID(), timestamp: Date = Date(), modelName: String, latencyMs: Int) {
+    /// True when recorded context usage exceeded the model's estimated capacity.
+    var isContextTruncated: Bool {
+        guard let used = contextCharacters, let capacity = contextCapacityCharacters else {
+            return false
+        }
+        return used > capacity
+    }
+
+    init(
+        id: UUID = UUID(),
+        timestamp: Date = Date(),
+        modelName: String,
+        latencyMs: Int,
+        contextCharacters: Int? = nil,
+        contextCapacityCharacters: Int? = nil
+    ) {
         self.id = id
         self.timestamp = timestamp
         self.modelName = modelName
         self.latencyMs = latencyMs
+        self.contextCharacters = contextCharacters
+        self.contextCapacityCharacters = contextCapacityCharacters
     }
 }
 
@@ -45,11 +68,19 @@ final class PerformanceMetricsStore: ObservableObject {
     /// Append a new metric and drop the oldest entries above the cap. Persists after every record
     /// because the cap keeps the JSON blob small (well under 10 KB) and the write happens at most
     /// once per LLM request — far below any debouncing threshold.
-    func record(modelName: String, latencyMs: Int, timestamp: Date = Date()) {
+    func record(
+        modelName: String,
+        latencyMs: Int,
+        timestamp: Date = Date(),
+        contextCharacters: Int? = nil,
+        contextCapacityCharacters: Int? = nil
+    ) {
         let entry = PerformanceMetricEntry(
             timestamp: timestamp,
             modelName: modelName,
-            latencyMs: latencyMs
+            latencyMs: latencyMs,
+            contextCharacters: contextCharacters,
+            contextCapacityCharacters: contextCapacityCharacters
         )
         var updated = entries
         updated.append(entry)

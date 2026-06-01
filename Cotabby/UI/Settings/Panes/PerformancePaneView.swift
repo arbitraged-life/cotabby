@@ -126,6 +126,8 @@ struct PerformancePaneView: View {
                 .frame(width: 130, alignment: .leading)
             Text("Model")
                 .frame(maxWidth: .infinity, alignment: .leading)
+            Text("Context")
+                .frame(width: 80, alignment: .trailing)
             Text("Duration")
                 .frame(width: 90, alignment: .trailing)
         }
@@ -143,12 +145,33 @@ struct PerformancePaneView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .lineLimit(1)
                 .truncationMode(.middle)
+            contextLabel(for: entry)
+                .frame(width: 80, alignment: .trailing)
             Text("\(entry.latencyMs) ms")
                 .frame(width: 90, alignment: .trailing)
                 .monospacedDigit()
         }
         .font(.callout)
         .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func contextLabel(for entry: PerformanceMetricEntry) -> some View {
+        if let chars = entry.contextCharacters {
+            let displayKB = String(format: "%.1fK", Double(chars) / 1000.0)
+            if entry.isContextTruncated {
+                Text("⚠️ \(displayKB)")
+                    .monospacedDigit()
+                    .foregroundStyle(.orange)
+                    .help("Context (\(chars) chars) likely exceeded model capacity")
+            } else {
+                Text(displayKB)
+                    .monospacedDigit()
+            }
+        } else {
+            Text("—")
+                .foregroundStyle(.tertiary)
+        }
     }
 
     // MARK: - Bindings
