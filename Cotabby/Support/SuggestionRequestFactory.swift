@@ -25,7 +25,11 @@ enum SuggestionRequestFactory {
     /// `SuggestionTextNormalizer` applies deterministic space management on the output side.
     static func shouldGenerateSuggestion(for precedingText: String) -> Bool {
         let trimmed = precedingText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmed.isEmpty
+        guard !trimmed.isEmpty else { return false }
+        // Suppress when the cursor is immediately after a U+FFFC object replacement character
+        // (embedded figure in Word with square wrap). Inserting text here displaces the figure. (#487)
+        if precedingText.last == "\u{FFFC}" { return false }
+        return true
     }
 
     /// Builds the generation request plus the exact prompt preview used by Cotabby's diagnostics UI.
