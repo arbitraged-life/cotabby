@@ -59,6 +59,14 @@ struct CompletionRenderModePolicy: Equatable, Sendable {
     /// Phase 2. A bundle in this map wins over `userPreference`.
     let perAppOverrides: [String: MirrorPreference]
 
+    /// Apps known to have broken AX caret geometry that should always use mirror mode when the
+    /// user preference is `.auto`. These are apps whose AX layer returns a frame covering the
+    /// entire page/canvas, making inline positioning impossible.
+    private static let knownBrokenCaretApps: Set<String> = [
+        "com.microsoft.word",
+        "com.microsoft.Word"
+    ]
+
     nonisolated init(
         userPreference: MirrorPreference = .auto,
         perAppOverrides: [String: MirrorPreference] = [:]
@@ -97,6 +105,11 @@ struct CompletionRenderModePolicy: Equatable, Sendable {
             return .mirror(reason: reason)
 
         case .auto:
+            // Known-broken apps get forced to mirror mode regardless of reported caret quality,
+            // because their AX implementation returns misleading geometry (full-page frame as caret).
+            if let bundleIdentifier, Self.knownBrokenCaretApps.contains(bundleIdentifier) {
+                return .mirror(reason: .caretGeometryEstimated)
+            }
             // Only `.estimated` geometry triggers auto-mirror. `.derived` already lands close enough
             // to the real caret to render inline ghost text confidently; promoting it would over-fire
             // the card for hosts that work fine today (Gmail, Outlook, Discord text-marker path).
