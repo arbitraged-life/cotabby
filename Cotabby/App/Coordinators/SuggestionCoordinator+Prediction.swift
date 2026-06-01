@@ -87,6 +87,20 @@ extension SuggestionCoordinator {
         }
 
         let context = interactionState.materializeContext(from: rawContext)
+
+        // Math expression short-circuit: if the text ends with `=`, try instant calculation
+        // before invoking the LLM. (#477)
+        if let mathResult = MathExpressionEvaluator.evaluate(precedingText: rawContext.precedingText) {
+            let suggestion = SuggestionResult(
+                generation: context.generation,
+                rawText: " " + mathResult,
+                text: " " + mathResult,
+                latency: 0
+            )
+            await apply(result: suggestion, requestContext: context, workID: workID)
+            return
+        }
+
         let visualContextSummary = visualContextCoordinator.excerpt(for: context)
         let rawClipboard = settingsSnapshot.isClipboardContextEnabled
             ? clipboardContextProvider.currentContext()
