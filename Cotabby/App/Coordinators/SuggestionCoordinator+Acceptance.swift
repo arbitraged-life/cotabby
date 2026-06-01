@@ -111,9 +111,16 @@ extension SuggestionCoordinator {
         // the user types the separating space themselves, producing a double space on accept. The
         // session still advances by the full `acceptedChunk`; the whitespace we skip typing is the
         // field's own, so the post-insertion consumed-suffix accounting still lines up.
+        // Detect mid-word continuation: the model's full suggestion starts with a word character
+        // (no leading whitespace), meaning it was generated as a partial-word completion.
+        let isMidWord: Bool = {
+            guard let first = sessionForAcceptance.fullText.first else { return false }
+            return first.isLetter || first.isNumber
+        }()
         let insertionChunk = SuggestionSessionReconciler.insertionChunk(
             forAcceptedChunk: acceptedChunk,
-            precedingText: liveContext.precedingText
+            precedingText: liveContext.precedingText,
+            isMidWordContinuation: isMidWord
         )
 
         // An empty chunk means the accepted span was entirely a boundary space the field already

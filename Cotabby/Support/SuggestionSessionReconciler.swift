@@ -401,7 +401,7 @@ enum SuggestionSessionReconciler {
     /// typed-matched the next suggestion char will fall out of the tolerate window and the session
     /// will be invalidated, which is acceptable: the next prediction picks up from the corrected
     /// field state without any visible glue.
-    static func insertionChunk(forAcceptedChunk chunk: String, precedingText: String) -> String {
+    static func insertionChunk(forAcceptedChunk chunk: String, precedingText: String, isMidWordContinuation: Bool = false) -> String {
         if let lastScalar = precedingText.unicodeScalars.last,
            CharacterSet.whitespaces.contains(lastScalar) {
             // The drop predicate mirrors the guard's horizontal-whitespace definition so a chunk
@@ -414,6 +414,13 @@ enum SuggestionSessionReconciler {
               firstChunkChar.isAcceptanceWordCharacter,
               let lastPrecedingChar = precedingText.last,
               lastPrecedingChar.isAcceptanceWordCharacter else {
+            return chunk
+        }
+
+        // When the model's suggestion starts mid-word (no leading whitespace in fullText), the
+        // suggestion is a partial-word completion — inserting a space would split the word.
+        // Example: user typed "descpt", model suggests "ription" → "description", not "descpt ription".
+        if isMidWordContinuation {
             return chunk
         }
 
