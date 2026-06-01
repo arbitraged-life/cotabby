@@ -113,17 +113,16 @@ struct SuggestionConfiguration: Equatable, Sendable {
         minP: 0.08,
         repetitionPenalty: 1.05,
         randomSeed: nil,
-        maxPrefixWords: 50,
-        // Prompt windows should stay small for the local llama path. Sending an entire editor
-        // buffer hurts latency with little quality gain because Cotabby is only completing the
-        // immediate local continuation.
-        maxPrefixCharacters: 1000,
+        maxPrefixWords: 100,
+        // Wider prefix window gives the local model enough context to continue mid-thought.
+        // Latency impact is negligible vs. generation time for 3B–7B models.
+        maxPrefixCharacters: 2000,
         // Apple's on-device model has a 4096-token shared context. Even with instructions plus
         // visual/clipboard context, there is room to send ~3x the llama window before crowding
         // the prompt, and the extra surrounding sentences materially help mid-thought completions.
         maxPrefixWordsFoundationModel: 150,
         maxPrefixCharactersFoundationModel: 2500,
-        maxSuffixCharacters: 192,
+        maxSuffixCharacters: 500,
         // Seed the profile settings with lightweight defaults on first launch.
         defaultUserName: "Jacob",
         defaultWordCountPreset: .twelveToTwenty,

@@ -68,9 +68,9 @@ enum SuggestionRequestFactory {
         if settings.personalizationStrength > 0 {
             let entries = InputHistoryStore.shared.recentEntries(limit: 500)
             if !entries.isEmpty {
-                let vocab = PersonalizationEngine.buildVocabularyBias(from: entries, topN: 20)
+                let vocab = PersonalizationEngine.buildVocabularyBias(from: entries, topN: 60)
                 if !vocab.isEmpty {
-                    let topWords = vocab.sorted { $0.value > $1.value }.map(\.key).prefix(15)
+                    let topWords = vocab.sorted { $0.value > $1.value }.map(\.key).prefix(30)
                     effectiveRules.append(
                         "The user frequently uses these words (prefer them when natural): "
                             + topWords.joined(separator: ", ")
@@ -185,11 +185,13 @@ enum SuggestionRequestFactory {
     private static func truncatedSuffix(from trailingText: String) -> String? {
         let trimmed = trailingText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        // 500 chars / ~30 words — enough to see the sentence or paragraph boundary
+        // 500 chars — enough to see the paragraph/function boundary.
+        // Preserve newlines so the model can infer structure (code blocks, paragraphs).
         let maxChars = 500
         let window = String(trimmed.prefix(maxChars))
-        let words = window.split(whereSeparator: { $0.isWhitespace }).prefix(30)
-        let result = words.joined(separator: " ")
+        // Cap at ~30 lines to avoid runaway vertical content.
+        let lines = window.components(separatedBy: .newlines).prefix(30)
+        let result = lines.joined(separator: "\n")
         return result.isEmpty ? nil : result
     }
 

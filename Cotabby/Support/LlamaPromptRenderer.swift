@@ -190,9 +190,11 @@ enum LlamaPromptRenderer {
             sentences.append("The user's clipboard currently contains \(clipboardContext)")
         }
 
-        // Length is governed by the token budget for the local path (see `prompt(...)`), so the
-        // explicit word-range cue stays omitted here too; the parameter is kept wired for symmetry.
-        _ = completionLengthInstruction
+        // For instruct/chat models, include the length hint so the model can self-regulate output
+        // length beyond just the hard token budget ceiling.
+        if !completionLengthInstruction.isEmpty {
+            sentences.append(completionLengthInstruction)
+        }
         if let suffixText, !suffixText.isEmpty {
             sentences.append(
                 "Text that already exists after the cursor (do not repeat or restate it, "
