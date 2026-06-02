@@ -22,6 +22,33 @@ final class SuggestionTextNormalizerTests: XCTestCase {
         XCTAssertEqual(normalized, " useful continuation")
     }
 
+    func test_normalize_rejectsEllipsisPlaceholder() {
+        // Small models sometimes emit "..." or "…" as a placeholder instead of real continuation
+        // text. The normalizer must drop these so nothing junk lands on Tab. (#508)
+        let request = CotabbyTestFixtures.suggestionRequest(
+            prefixText: "when typing a wo",
+            prompt: "PROMPT",
+            precedingText: "when typing a wo"
+        )
+
+        for placeholder in ["...", "…", " ... ", ". . .", "....."] {
+            let normalized = SuggestionTextNormalizer.normalize(placeholder, for: request)
+            XCTAssertEqual(normalized, "", "expected placeholder \"\(placeholder)\" to be dropped")
+        }
+    }
+
+    func test_normalize_keepsSingleClosingPunctuation() {
+        // A lone legitimate closing glyph is real continuation and must survive the placeholder gate.
+        let request = CotabbyTestFixtures.suggestionRequest(
+            prefixText: "print(value",
+            prompt: "PROMPT",
+            precedingText: "print(value"
+        )
+
+        let normalized = SuggestionTextNormalizer.normalize(")", for: request)
+        XCTAssertEqual(normalized, ")")
+    }
+
     func test_normalize_removesPrefixEchoWhenPromptWasNotEchoed() {
         let request = CotabbyTestFixtures.suggestionRequest(
             prefixText: "Hello world",

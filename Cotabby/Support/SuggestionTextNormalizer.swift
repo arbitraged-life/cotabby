@@ -110,6 +110,14 @@ enum SuggestionTextNormalizer {
             }
         }
 
+        // Reject placeholder-only output. Small instruct models (e.g. Gemma 2B) sometimes emit an
+        // ellipsis ("...", "…") or a bare run of punctuation as a stand-in for "I have nothing to
+        // add" instead of real continuation text. Inserting that on Tab is never useful, so we drop
+        // it and let the coordinator regenerate. (#508)
+        if isPlaceholderOnly(normalized) {
+            return ""
+        }
+
         // Final safety gate: never surface control characters, replacement glyphs, or
         // whitespace-only output as ghost text. Returning empty makes the coordinator treat this
         // as "no suggestion" and regenerate rather than insert junk on Tab.
@@ -118,6 +126,24 @@ enum SuggestionTextNormalizer {
         }
 
         return normalized
+    }
+
+    /// True when the suggestion is a placeholder rather than real continuation text. Catches the
+    /// ellipsis stand-ins small models emit ("...", "…", ". . .") and longer punctuation-only runs,
+    /// while still allowing a single legitimate closing glyph (")", ".", "?", "\"") through. (#508)
+    private static func isPlaceholderOnly(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+
+        let hasAlphanumeric = trimmed.contains { $0.isLetter || $0.isNumber }
+        guard !hasAlphanumeric else { return false }
+
+        // No alphanumerics. Treat any ellipsis form, or any multi-character punctuation/whitespace
+        // run, as a placeholder. A single punctuation char (e.g. a closing bracket) is left alone.
+        if trimmed.contains("…") || trimmed.contains("..") {
+            return true
+        }
+        return trimmed.count > 1
     }
 
     /// Removes `<think>…</think>` reasoning blocks: complete blocks first, then any dangling open
