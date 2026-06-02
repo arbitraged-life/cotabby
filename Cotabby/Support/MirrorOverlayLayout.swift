@@ -152,10 +152,24 @@ struct MirrorOverlayLayout: Equatable {
         switch reason {
         case .caretGeometryEstimated:
             if let inputFrame = geometry.inputFrameRect?.standardized, !inputFrame.isEmpty {
+                // If the input frame is unreasonably tall (full-page text area, e.g. Word), the
+                // bottom edge is meaningless. Use the mouse Y as a proxy — users click where they
+                // type. Fall back to vertical center of the frame if mouse is outside it.
+                if inputFrame.height > 400 {
+                    let mouseY = NSEvent.mouseLocation.y
+                    if mouseY >= inputFrame.minY && mouseY <= inputFrame.maxY {
+                        return mouseY - Metrics.caretFallbackVerticalOffset
+                    }
+                    return inputFrame.midY - Metrics.anchorGap
+                }
                 return inputFrame.minY - Metrics.anchorGap
             }
             // Caret-rect fallback uses the larger offset because in `.estimated` we treat the caret
             // height as unreliable; the extra slack keeps the card from overlapping the typed line.
+            if geometry.caretRect.height > 400 {
+                let mouseY = NSEvent.mouseLocation.y
+                return mouseY - Metrics.caretFallbackVerticalOffset
+            }
             return geometry.caretRect.minY - Metrics.caretFallbackVerticalOffset
 
         case .userPreference, .perAppOverride:

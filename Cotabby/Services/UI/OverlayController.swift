@@ -13,11 +13,19 @@ final class OverlayController: SuggestionOverlayControlling {
     private enum Layout {
         static let minimumGhostFontSize: CGFloat = 14
         static let maximumGhostFontSize: CGFloat = 24
+        /// Derived caret rects come from line-box geometry rather than measured text bounds, so the
+        /// reported height often inflates against the host's real font size (Slack, several web
+        /// editors). Keep the ceiling well below the exact cap so a wrong derived reading cannot
+        /// render oversized ghost text — the observed failure mode is too-large, not too-small.
+        static let maximumDerivedGhostFontSize: CGFloat = 17
         static let maximumEstimatedGhostFontSize: CGFloat = 16
         static let fontToLineHeightRatio: CGFloat = 0.78
     }
 
     var onStateChange: ((OverlayState) -> Void)?
+
+    /// Set by the coordinator before presenting to show "1/3" indicator for tree decode alternatives.
+    var alternativeIndicator: String?
 
     private let suggestionSettings: SuggestionSettingsModel
 
@@ -135,9 +143,14 @@ final class OverlayController: SuggestionOverlayControlling {
     /// Inline ghost text drawn next to the caret. This is the original rendering path; the body
     /// stays unchanged from the pre-mirror behavior aside from being extracted into its own method.
     private func showInline(text: String, geometry: SuggestionOverlayGeometry) {
+        // Key the stabilizer on the field's identity rather than `focusChangeSequence`. The polling
+        // signature in `FocusTracker` bumps `focusChangeSequence` whenever the field's frame
+        // changes, which includes the common "input grew taller as text wrapped" case. Using the
+        // identity key keeps the per-session caret-height minimum alive across that growth and
+        // still resets on genuine field switches.
         let stabilizedCaretHeight = ghostFontStabilizer.stabilizedCaretHeight(
             geometry.caretRect.height,
-            focusSessionKey: geometry.focusChangeSequence
+            focusSessionKey: geometry.focusedInputIdentityKey
         )
         let fontSize = resolvedGhostFontSize(
             forCaretHeight: stabilizedCaretHeight,
@@ -163,7 +176,8 @@ final class OverlayController: SuggestionOverlayControlling {
             fontSize: fontSize,
             customColor: customGhostColor,
             keycapLabel: acceptanceHintLabel,
-            opacity: ghostOpacity
+            opacity: ghostOpacity,
+            alternativeIndicator: alternativeIndicator
         )
 
         let contentView: NSHostingView<GhostSuggestionView>
@@ -240,11 +254,13 @@ final class OverlayController: SuggestionOverlayControlling {
         panel.orderFrontRegardless()
     }
 
-    /// Exact and derived caret rects usually reflect the real text line height, so they may scale
-    /// up in larger editors. Estimated rects are much less trustworthy because some apps only
-    /// expose the full field frame; the extra ceiling prevents one bad estimate from rendering
-    /// comically oversized ghost text. `caretHeight` is already floored to the per-session minimum
-    /// by `ghostFontStabilizer`, so this only applies the static floor and quality ceilings.
+    /// Caps the proposed font size by how much we trust the caret geometry:
+    ///   - `.exact`: measured text bounds, trusted up to the full ceiling so larger editors scale.
+    ///   - `.derived`: line-box geometry that commonly inflates against the real font, tightly
+    ///     capped to avoid the "insanely big derived" failure mode observed in Slack-like hosts.
+    ///   - `.estimated`: full-field-frame fallback, even less trustworthy, tightest ceiling.
+    /// `caretHeight` is already floored to the per-session minimum by `ghostFontStabilizer`, so this
+    /// only applies the static floor and the per-quality ceiling.
     private func resolvedGhostFontSize(
         forCaretHeight caretHeight: CGFloat,
         caretQuality: CaretGeometryQuality
@@ -253,9 +269,15 @@ final class OverlayController: SuggestionOverlayControlling {
             Layout.minimumGhostFontSize,
             caretHeight * Layout.fontToLineHeightRatio
         )
-        let qualityCap = caretQuality == .estimated
-            ? Layout.maximumEstimatedGhostFontSize
-            : Layout.maximumGhostFontSize
+        let qualityCap: CGFloat
+        switch caretQuality {
+        case .exact:
+            qualityCap = Layout.maximumGhostFontSize
+        case .derived:
+            qualityCap = Layout.maximumDerivedGhostFontSize
+        case .estimated:
+            qualityCap = Layout.maximumEstimatedGhostFontSize
+        }
 
         return min(proposedSize, qualityCap)
     }
@@ -263,7 +285,11 @@ final class OverlayController: SuggestionOverlayControlling {
     private func targetScreenVisibleFrame(for caretRect: CGRect) -> CGRect {
         let midpoint = CGPoint(x: caretRect.midX, y: caretRect.midY)
 
-        if let screen = NSScreen.screens.first(where: { $0.visibleFrame.contains(midpoint) }) {
+        // Use full frame (not visibleFrame) for ownership — visibleFrame excludes the menu bar
+        // and Dock areas, causing carets near those edges to miss all screens and fall through
+        // to NSScreen.main (wrong display on multi-monitor setups). Once we find the owning
+        // screen, return its visibleFrame for layout clamping. (#261)
+        if let screen = NSScreen.screens.first(where: { $0.frame.contains(midpoint) }) {
             return screen.visibleFrame
         }
 
@@ -294,6 +320,8 @@ private struct GhostSuggestionView: View {
     /// User-controlled fade for the suggestion text, in [0.3, 1.0]. Applied only to the ghost text,
     /// not the keycap, so the acceptance hint stays legible at low opacities.
     let opacity: Double
+    /// Alternative indicator label (e.g. "1/3") or nil when no alternatives available.
+    let alternativeIndicator: String?
 
     var ghostColor: Color {
         let baseColor = customColor
@@ -330,6 +358,20 @@ private struct GhostSuggestionView: View {
             }
         }
         .fixedSize(horizontal: true, vertical: true)
+        .overlay(alignment: .topTrailing) {
+            if let alternativeIndicator {
+                Text(alternativeIndicator)
+                    .font(.system(size: max(fontSize * 0.7, 9), weight: .medium, design: .rounded))
+                    .foregroundStyle(ghostColor)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(colorScheme == .dark ? Color(white: 0.15) : Color(white: 0.92))
+                    )
+                    .offset(x: 4, y: -2)
+            }
+        }
     }
 }
 

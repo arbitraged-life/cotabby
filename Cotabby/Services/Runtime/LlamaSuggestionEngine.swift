@@ -11,67 +11,114 @@ import Logging
 @MainActor
 final class LlamaSuggestionEngine {
     private let runtimeManager: LlamaRuntimeManager
+    private let suggestionSettings: SuggestionSettingsModel
     private var promptCacheHintTracker = LlamaPromptCacheHintTracker()
 
-    init(runtimeManager: LlamaRuntimeManager) {
+    init(runtimeManager: LlamaRuntimeManager, suggestionSettings: SuggestionSettingsModel) {
         self.runtimeManager = runtimeManager
+        self.suggestionSettings = suggestionSettings
     }
 
     /// Executes one generation request and packages the raw and normalized result for the coordinator.
+    /// When tree decode is enabled, generates multiple candidates and returns alternatives.
     func generateSuggestion(for request: SuggestionRequest) async throws -> SuggestionResult {
+        let baseMetadata: Logger.Metadata = [
+            "request_id": .string(request.requestID),
+            "engine": .string("llama")
+        ]
         do {
             let startTime = Date()
             let cachedPrefixBytes = promptCacheHintTracker.cachedPrefixBytes(for: request)
             let hintDesc = cachedPrefixBytes.map(String.init) ?? "none"
             CotabbyLogger.suggestion.debug(
-                "Llama generating: prompt=\(request.prompt.count)B cache_hint=\(hintDesc) max_tokens=\(request.maxPredictionTokens)"
+                "Llama generating",
+                metadata: baseMetadata.merging([
+                    "prompt_bytes": .stringConvertible(request.prompt.count),
+                    "cache_hint_bytes": .string(hintDesc),
+                    "max_tokens": .stringConvertible(request.maxPredictionTokens)
+                ]) { _, new in new }
             )
-            let rawSuggestion = try await runtimeManager.generate(
+
+            let options = LlamaGenerationOptions(
+                maxPredictionTokens: request.maxPredictionTokens,
+                temperature: request.temperature,
+                topK: request.topK,
+                topP: request.topP,
+                minP: request.minP,
+                repetitionPenalty: request.repetitionPenalty,
+                seed: request.randomSeed
+            )
+
+            // Use tree decode when enabled (candidateCount > 1)
+            let treeConfig = treeDecodeConfiguration
+            let treeResult = try await runtimeManager.generateTree(
                 prompt: request.prompt,
                 cachedPrefixBytes: cachedPrefixBytes,
-                options: LlamaGenerationOptions(
-                    maxPredictionTokens: request.maxPredictionTokens,
-                    temperature: request.temperature,
-                    topK: request.topK,
-                    topP: request.topP,
-                    minP: request.minP,
-                    repetitionPenalty: request.repetitionPenalty,
-                    seed: request.randomSeed
-                )
+                options: options,
+                config: treeConfig
             )
             try Task.checkCancellation()
 
             promptCacheHintTracker.recordSuccessfulRequest(request)
-            let normalizedSuggestion = SuggestionTextNormalizer.normalize(rawSuggestion, for: request)
+
+            guard let primary = treeResult.primary else {
+                throw SuggestionClientError.generationFailed("Tree decode returned no candidates.")
+            }
+
+            let normalizedPrimary = SuggestionTextNormalizer.normalize(primary.text, for: request)
+            let normalizedAlternatives = treeResult.alternatives.map {
+                SuggestionTextNormalizer.normalize($0.text, for: request)
+            }.filter { !$0.isEmpty && $0 != normalizedPrimary }
+
             let latency = Date().timeIntervalSince(startTime)
-            let rawChars = rawSuggestion.count
-            let normalizedChars = normalizedSuggestion.count
             let latencyMs = Int(latency * 1000)
+            let altCount = normalizedAlternatives.count
             CotabbyLogger.suggestion.debug(
-                "Llama generated: raw=\(rawChars) chars, normalized=\(normalizedChars) chars, latency=\(latencyMs)ms"
+                "Llama tree decode",
+                metadata: [
+                    "primary_chars": .stringConvertible(normalizedPrimary.count),
+                    "alternatives": .stringConvertible(altCount),
+                    "latency_ms": .stringConvertible(latencyMs)
+                ]
             )
             return SuggestionResult(
                 generation: request.generation,
-                rawText: rawSuggestion,
-                text: normalizedSuggestion,
-                latency: latency
+                rawText: primary.text,
+                text: normalizedPrimary,
+                latency: latency,
+                alternatives: normalizedAlternatives
             )
         } catch is CancellationError {
-            CotabbyLogger.suggestion.debug("Llama generation cancelled")
+            CotabbyLogger.suggestion.debug("Llama generation cancelled", metadata: baseMetadata)
             throw SuggestionClientError.cancelled
         } catch let error as LlamaRuntimeError {
-            CotabbyLogger.suggestion.error("Llama runtime error, resetting cache: \(error.localizedDescription)")
+            CotabbyLogger.suggestion.error(
+                "Llama runtime error, resetting cache: \(error.localizedDescription)",
+                metadata: baseMetadata
+            )
             await resetCachedGenerationContext()
             throw SuggestionClientError.unavailable(error.localizedDescription)
         } catch let error as SuggestionClientError {
-            CotabbyLogger.suggestion.error("Suggestion client error, resetting cache: \(error.localizedDescription)")
+            CotabbyLogger.suggestion.error(
+                "Suggestion client error, resetting cache: \(error.localizedDescription)",
+                metadata: baseMetadata
+            )
             await resetCachedGenerationContext()
             throw error
         } catch {
-            CotabbyLogger.suggestion.error("Unexpected generation error, resetting cache: \(error.localizedDescription)")
+            CotabbyLogger.suggestion.error(
+                "Unexpected generation error, resetting cache: \(error.localizedDescription)",
+                metadata: baseMetadata
+            )
             await resetCachedGenerationContext()
             throw SuggestionClientError.generationFailed(error.localizedDescription)
         }
+    }
+
+    /// Tree decode configuration derived from user settings.
+    var treeDecodeConfiguration: TreeDecodeConfiguration {
+        let count = suggestionSettings.treeCandidateCount
+        return count <= 1 ? .disabled : TreeDecodeConfiguration(candidateCount: count)
     }
 
     /// Clears both the Swift-side hint tracker and the native llama KV cache.

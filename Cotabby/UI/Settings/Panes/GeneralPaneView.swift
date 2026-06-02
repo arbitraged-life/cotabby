@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// File overview:
 /// "General" detail pane of the redesigned Settings window. Groups settings into four visually
@@ -8,56 +9,286 @@ import SwiftUI
 /// menu-bar quick control so users can connect the two.
 struct GeneralPaneView: View {
     @ObservedObject var suggestionSettings: SuggestionSettingsModel
+    @ObservedObject var launchAtLoginService: LaunchAtLoginService
     let onShowWelcome: () -> Void
+
+    @State private var cotypistImportStatus: String?
+    @State private var importStatusIsError = false
 
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         SettingsPaneScaffold {
-            Section {
-                Toggle("Enable Globally", isOn: globallyEnabledBinding)
+            if let kofiURL = URL(string: "https://ko-fi.com/cotabby") {
+                Section {
+                    HStack(spacing: 12) {
+                        Text("Enjoying Cotabby? Please consider supporting free open-source software")
+                            .font(.subheadline)
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        Link(destination: kofiURL) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "heart.fill")
+                                    .foregroundStyle(.pink)
+                                Text("Support")
+                                    .fontWeight(.semibold)
+                            }
+                            .font(.subheadline)
+                            .foregroundStyle(Color.blue)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.white, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .listRowBackground(Color.blue)
+                }
+            }
 
-                // Fast Mode is the most user-facing performance lever, so it gets prime real
-                // estate at the top. The "(no screen context)" suffix tells the user concretely
-                // what gets skipped so they can decide whether they care.
-                Toggle("Fast Mode (no screen context)", isOn: fastModeEnabledBinding)
+            Section("Status") {
+                Toggle(isOn: globallyEnabledBinding) {
+                    SettingsRowLabel(
+                        title: "Enable Globally",
+                        description: "Turn Cotabby off everywhere without quitting the app."
+                    )
+                }
+
+                Toggle(isOn: fastModeEnabledBinding) {
+                    SettingsRowLabel(
+                        title: "Fast Mode",
+                        description: "Skip the screenshot-based context step for faster suggestions. " +
+                            "Suggestions rely only on the text you've typed."
+                    )
+                }
+
+                Toggle(isOn: launchAtLoginBinding) {
+                    SettingsRowLabel(
+                        title: "Open at Login",
+                        description: launchAtLoginDescription
+                    )
+                }
+                // Disabled only when macOS reports the login item as unavailable (e.g. the app isn't
+                // in /Applications); the description then explains how to fix it.
+                .disabled(!launchAtLoginService.state.canToggle)
             }
 
             Section("Behavior") {
-                Toggle("Include Clipboard Context", isOn: clipboardContextEnabledBinding)
+                Toggle(isOn: clipboardContextEnabledBinding) {
+                    SettingsRowLabel(
+                        title: "Include Clipboard Context",
+                        description: "Enable clipboard context for more relevant completions. When enabled, Cotabby reads your clipboard to better understand what you're working on. Clipboard contents are processed locally and are never stored or sent anywhere."
+                    )
+                }
 
-                Toggle("Allow Multi-line Suggestions", isOn: multiLineEnabledBinding)
+                Toggle(isOn: multiLineEnabledBinding) {
+                    SettingsRowLabel(
+                        title: "Allow Multi-line Suggestions",
+                        description: "Allow continuations that span more than one line. Off keeps suggestions to a single line."
+                    )
+                }
 
-                Toggle("Accept Punctuation With Word", isOn: autoAcceptTrailingPunctuationBinding)
+                Toggle(isOn: autoAcceptTrailingPunctuationBinding) {
+                    SettingsRowLabel(
+                        title: "Accept Punctuation With Word",
+                        description: "When you accept a word, also accept the punctuation that follows it " +
+                            "(commas, periods) so you don't have to type it."
+                    )
+                }
+
+                Toggle(isOn: emojiPickerEnabledBinding) {
+                    SettingsRowLabel(
+                        title: "Inline Emoji Picker",
+                        description: "Type a name like :smile to search inline, then press your accept-word " +
+                            "shortcut to insert the selected emoji."
+                    )
+                }
+
+                Stepper(
+                    "Alternatives: \(suggestionSettings.treeCandidateCount == 1 ? "Off" : "\(suggestionSettings.treeCandidateCount)")",
+                    value: treeCandidateCountBinding,
+                    in: 1...4
+                )
+                .help("Generate multiple suggestion candidates (⌥] / ⌥[ to cycle). Uses more memory and latency.")
+
+                Divider()
+
+                Toggle(isOn: typoSuppressionBinding) {
+                    SettingsRowLabel(
+                        title: "Don't Show Completions When Typo Suspected",
+                        description: "Hides the completion when Cotabby suspects a typo in the word you're currently typing. It only ever looks at the current word and may occasionally miss or misjudge a typo. It is not a substitute for a full spell-checker."
+                    )
+                }
+
+                if suggestionSettings.isTypoSuppressionEnabled {
+                    Toggle(isOn: typoCorrectionDisplayBinding) {
+                        SettingsRowLabel(
+                            title: "Show Suggested Fixes",
+                            description: "When a likely correction is available, show it inline as a strikethrough on the typo with the fix next to it."
+                        )
+                    }
+                    .padding(.leading, 16)
+                }
+
+                Divider()
+
+                Toggle(isOn: inputStorageBinding) {
+                    SettingsRowLabel(
+                        title: "Store Inputs Without Accepted Completions",
+                        description: "When enabled, Cotabby will store all inputs in text fields it monitors, even when you don't accept any completions. This helps build a more comprehensive dataset of your writing. When disabled, only inputs where you accepted at least one completion will be stored."
+                    )
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Personalize Word Choice")
+                        Spacer()
+                        Text(suggestionSettings.personalizationStrength == 0 ? "Off" : String(format: "%.0f%%", suggestionSettings.personalizationStrength * 100))
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: personalizationStrengthBinding, in: 0...1, step: 0.1)
+                    Text("Uses your typing history to slightly favor the words and phrases you prefer. Subtle at lower values; too high may occasionally suggest a less fitting word.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack {
+                    Button("Import from Cotypist…") {
+                        importCotypistData()
+                    }
+                    if let importStatus = cotypistImportStatus {
+                        Text(importStatus)
+                            .font(.caption)
+                            .foregroundStyle(importStatusIsError ? .red : .secondary)
+                    }
+                }
+            }
+
+            // MARK: – Typing Behavior
+
+            Section("Typing Behavior") {
+                Toggle("Include trailing space", isOn: trailingSpaceBinding)
+                Text("When enabled, single-word completions include a trailing space so you can immediately continue typing the next word.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // MARK: – Shortcuts
+
+            Section("Shortcuts") {
+                LabeledContent("Force-activate completions") {
+                    Text(suggestionSettings.forceActivateKeyLabel.isEmpty ? "Not set" : suggestionSettings.forceActivateKeyLabel)
+                        .foregroundStyle(.secondary)
+                }
+                Text("In cases where completions are not triggered automatically, use this shortcut to manually invoke them.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                LabeledContent("Toggle completions in current app") {
+                    Text(suggestionSettings.tempToggleKeyLabel.isEmpty ? "Not set" : suggestionSettings.tempToggleKeyLabel)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Quickly turns completions off for a few minutes in the current application, or back on if currently disabled.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                LabeledContent("Toggle completions globally") {
+                    Text(suggestionSettings.globalToggleKeyLabel.isEmpty ? "Not set" : suggestionSettings.globalToggleKeyLabel)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Disables completions everywhere until you press the shortcut again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // MARK: – Labs
+
+            Section("Labs") {
+                Toggle("Enable mid-line completions", isOn: midLineCompletionBinding)
+                Text("Show completions even when there is text after the cursor on the same line. Completions will continue your current sentence forward from the cursor rather than filling in gaps between existing text.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if suggestionSettings.isEmojiPickerEnabled {
+                Section("Emoji Suggestions") {
+                    LabeledContent {
+                        HStack(spacing: 8) {
+                            ForEach(EmojiSkinTone.allCases, id: \.self) { tone in
+                                skinToneOption(for: tone)
+                            }
+                        }
+                    } label: {
+                        SettingsRowLabel(
+                            title: "Skin Tone",
+                            description: "For non-default tones, suggestions show your selected tone first " +
+                                "and keep the default emoji next."
+                        )
+                    }
+
+                    LabeledContent {
+                        HStack(spacing: 8) {
+                            ForEach(EmojiGender.allCases, id: \.self) { gender in
+                                emojiGenderOption(for: gender)
+                            }
+                        }
+                    } label: {
+                        SettingsRowLabel(
+                            title: "People Emoji Style",
+                            description: "Choose person, man, or woman variants when an emoji offers them."
+                        )
+                    }
+                }
             }
 
             Section("Display") {
-                Picker("Suggestion Display", selection: mirrorPreferenceBinding) {
+                // The `.help()` tooltip was promoted to inline subtext so a novice can read the
+                // same guidance without knowing to hover.
+                Picker(selection: mirrorPreferenceBinding) {
                     ForEach(MirrorPreference.allCases) { preference in
                         Text(preference.displayLabel).tag(preference)
                     }
+                } label: {
+                    SettingsRowLabel(
+                        title: "Suggestion Display",
+                        description: "Auto picks inline ghost text when the app's caret position is reliable, " +
+                            "and a popup card when it isn't. Inline or Popup pins one style for every app."
+                    )
                 }
                 .pickerStyle(.menu)
-                .help(
-                    "Auto uses inline ghost text when the focused field exposes a reliable cursor " +
-                    "position, and switches to a popup card when it doesn't (some Electron and web " +
-                    "editors). Choose Inline or Popup to pin one style for every app."
-                )
 
-                Toggle("Show Indicator", isOn: showIndicatorBinding)
+                Toggle(isOn: showIndicatorBinding) {
+                    SettingsRowLabel(
+                        title: "Show Field Indicator",
+                        description: "Show a small icon at the edge of a field when Cotabby is ready to suggest."
+                    )
+                }
+
+                Toggle(isOn: menuBarWordCountVisibleBinding) {
+                    SettingsRowLabel(
+                        title: "Show Word Count in Menu Bar",
+                        description: "Show a running count of words you've accepted next to the menu bar icon."
+                    )
+                }
 
                 Toggle(isOn: showAcceptanceHintBinding) {
-                    HStack(spacing: 4) {
-                        Text("Show")
-                        Text(suggestionSettings.acceptanceKeyLabel)
-                            .font(.system(.body, design: .rounded).weight(.semibold))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                    .fill(.quaternary)
-                            )
-                        Text("Key Hint")
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 4) {
+                            Text("Show")
+                            Text(suggestionSettings.acceptanceKeyLabel)
+                                .font(.system(.body, design: .rounded).weight(.semibold))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                        .fill(.quaternary)
+                                )
+                            Text("Key Hint")
+                        }
+                        Text("Show the accept-key badge next to the ghost text so you remember which key inserts it.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -90,7 +321,7 @@ struct GeneralPaneView: View {
                 }
             }
 
-            Section {
+            Section("Help") {
                 LabeledContent("Onboarding") {
                     Button("Open Welcome Guide") {
                         onShowWelcome()
@@ -137,6 +368,20 @@ struct GeneralPaneView: View {
         )
     }
 
+    private var emojiPickerEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { suggestionSettings.isEmojiPickerEnabled },
+            set: { suggestionSettings.setEmojiPickerEnabled($0) }
+        )
+    }
+
+    private var emojiSkinToneBinding: Binding<EmojiSkinTone> {
+        Binding(
+            get: { suggestionSettings.preferredEmojiSkinTone },
+            set: { suggestionSettings.setPreferredEmojiSkinTone($0) }
+        )
+    }
+
     private var autoAcceptTrailingPunctuationBinding: Binding<Bool> {
         Binding(
             get: { suggestionSettings.autoAcceptTrailingPunctuation },
@@ -151,10 +396,86 @@ struct GeneralPaneView: View {
         )
     }
 
+    private var treeCandidateCountBinding: Binding<Int> {
+        Binding(
+            get: { suggestionSettings.treeCandidateCount },
+            set: { suggestionSettings.setTreeCandidateCount($0) }
+        )
+    }
+
+    private var typoSuppressionBinding: Binding<Bool> {
+        Binding(
+            get: { suggestionSettings.isTypoSuppressionEnabled },
+            set: { suggestionSettings.setTypoSuppressionEnabled($0) }
+        )
+    }
+
+    private var typoCorrectionDisplayBinding: Binding<Bool> {
+        Binding(
+            get: { suggestionSettings.isTypoCorrectionDisplayEnabled },
+            set: { suggestionSettings.setTypoCorrectionDisplayEnabled($0) }
+        )
+    }
+
+    private var inputStorageBinding: Binding<Bool> {
+        Binding(
+            get: { suggestionSettings.isInputStorageEnabled },
+            set: { suggestionSettings.setInputStorageEnabled($0) }
+        )
+    }
+
+    private var personalizationStrengthBinding: Binding<Double> {
+        Binding(
+            get: { suggestionSettings.personalizationStrength },
+            set: { suggestionSettings.setPersonalizationStrength($0) }
+        )
+    }
+
+    private var trailingSpaceBinding: Binding<Bool> {
+        Binding(
+            get: { suggestionSettings.includeTrailingSpace },
+            set: { suggestionSettings.setIncludeTrailingSpace($0) }
+        )
+    }
+
+    private var midLineCompletionBinding: Binding<Bool> {
+        Binding(
+            get: { suggestionSettings.isMidLineCompletionEnabled },
+            set: { suggestionSettings.setMidLineCompletionEnabled($0) }
+        )
+    }
+
     private var fastModeEnabledBinding: Binding<Bool> {
         Binding(
             get: { suggestionSettings.isFastModeEnabled },
             set: { suggestionSettings.setFastModeEnabled($0) }
+        )
+    }
+
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { launchAtLoginService.state.isEnabled },
+            set: { launchAtLoginService.setEnabled($0) }
+        )
+    }
+
+    /// An enabled login item has nothing to explain, so never surface a leftover detail/error string
+    /// under a working toggle. Otherwise prefer the OS-provided status detail (approval needed / move
+    /// to Applications), then any registration error from the most recent toggle attempt, falling back
+    /// to the plain explanation — so the row reflects real login-item state, not just the switch.
+    private var launchAtLoginDescription: String {
+        if launchAtLoginService.state.isEnabled {
+            return "Start Cotabby automatically when you log in to your Mac."
+        }
+        return launchAtLoginService.state.detail
+            ?? launchAtLoginService.lastErrorMessage
+            ?? "Start Cotabby automatically when you log in to your Mac."
+    }
+
+    private var menuBarWordCountVisibleBinding: Binding<Bool> {
+        Binding(
+            get: { suggestionSettings.isMenuBarWordCountVisible },
+            set: { suggestionSettings.setMenuBarWordCountVisible($0) }
         )
     }
 
@@ -202,6 +523,84 @@ struct GeneralPaneView: View {
         .buttonStyle(.plain)
     }
 
+    @ViewBuilder
+    private func skinToneOption(for tone: EmojiSkinTone) -> some View {
+        let isSelected = suggestionSettings.preferredEmojiSkinTone == tone
+
+        Button {
+            suggestionSettings.setPreferredEmojiSkinTone(tone)
+        } label: {
+            ZStack(alignment: .bottomTrailing) {
+                Text(tone.sampleGlyph)
+                    .font(.system(size: 19))
+                    .frame(width: 34, height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.06))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(
+                                isSelected ? Color.accentColor : Color.primary.opacity(0.16),
+                                lineWidth: isSelected ? 2 : 1
+                            )
+                    )
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .background(Circle().fill(Color(nsColor: .controlBackgroundColor)))
+                        .offset(x: 3, y: 3)
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("\(tone.displayName) skin tone")
+        .accessibilityLabel("\(tone.displayName) skin tone")
+        .accessibilityValue(isSelected ? "Selected" : "")
+    }
+
+    @ViewBuilder
+    private func emojiGenderOption(for gender: EmojiGender) -> some View {
+        let isSelected = suggestionSettings.preferredEmojiGender == gender
+
+        Button {
+            suggestionSettings.setPreferredEmojiGender(gender)
+        } label: {
+            ZStack(alignment: .bottomTrailing) {
+                Text(gender.sampleGlyph)
+                    .font(.system(size: 19))
+                    .frame(width: 34, height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.06))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(
+                                isSelected ? Color.accentColor : Color.primary.opacity(0.16),
+                                lineWidth: isSelected ? 2 : 1
+                            )
+                    )
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .background(Circle().fill(Color(nsColor: .controlBackgroundColor)))
+                        .offset(x: 3, y: 3)
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("\(gender.displayName) variant")
+        .accessibilityLabel("\(gender.displayName) variant")
+        .accessibilityValue(isSelected ? "Selected" : "")
+    }
+
     private func swatchFill(for preset: GhostTextColorPreset) -> Color {
         guard let hex = preset.hex,
               let color = SuggestionTextColorCodec.color(fromHex: hex)
@@ -210,5 +609,35 @@ struct GeneralPaneView: View {
         }
 
         return color
+    }
+
+    private func importCotypistData() {
+        let panel = NSOpenPanel()
+        panel.title = "Import Cotypist History"
+        panel.message = "Select your Cotypist database (.db) or an exported JSON/JSONL file."
+        panel.allowedContentTypes = [
+            .init(filenameExtension: "db")!,
+            .init(filenameExtension: "sqlite")!,
+            .init(filenameExtension: "sqlite3")!,
+            .json
+        ]
+        panel.allowsOtherFileTypes = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        Task {
+            let result = await CotypistImporter.importFile(at: url)
+            await MainActor.run {
+                if let error = result.errorMessage {
+                    cotypistImportStatus = error
+                    importStatusIsError = true
+                } else {
+                    cotypistImportStatus = "Imported \(result.importedCount) entries (\(result.skippedCount) skipped)."
+                    importStatusIsError = false
+                }
+            }
+        }
     }
 }

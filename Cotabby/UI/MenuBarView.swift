@@ -24,6 +24,10 @@ struct MenuBarView: View {
     let onOpenSettings: () -> Void
     let onReportFeedback: () -> Void
 
+    /// Captures the popover's host window so `Button` actions that open another window can dismiss
+    /// the popover behind them. SwiftUI's `\.dismiss` does not work for `MenuBarExtra(.window)`.
+    @StateObject private var popoverDismisser = MenuBarPopoverDismisser()
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             headerSection
@@ -34,15 +38,60 @@ struct MenuBarView: View {
         }
         .padding(16)
         .frame(width: 340)
+        .modifier(MenuBarWindowBackgroundModifier())
         .background(
             MenuBarPresentationObserver {
                 permissionManager.refresh()
                 runtimeModel.refreshAvailableModels()
             }
         )
+        .background(MenuBarPopoverDismisserBinder(dismisser: popoverDismisser))
         .onAppear {
             permissionManager.refresh()
             runtimeModel.refreshAvailableModels()
+        }
+    }
+
+    // MARK: - Pause controls (#8)
+
+    /// Snooze controls: when paused, shows the resume affordance and a status line; otherwise offers
+    /// the three snooze durations behind a compact menu so the activation band stays tidy.
+    @ViewBuilder
+    private var pauseControlRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: suggestionSettings.isPaused ? "pause.circle.fill" : "pause.circle")
+                .font(.caption)
+                .foregroundStyle(suggestionSettings.isPaused ? .orange : .secondary)
+
+            if let status = PauseStatusFormatter.menuBarStatus(pausedUntil: suggestionSettings.pausedUntil) {
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
+
+                Button("Resume") {
+                    suggestionSettings.resume()
+                }
+                .font(.caption)
+                .buttonStyle(.borderless)
+                .foregroundStyle(.tint)
+            } else {
+                Text("Pause")
+                    .font(.caption)
+
+                Spacer(minLength: 0)
+
+                Menu("Snooze") {
+                    Button("15 minutes") { suggestionSettings.pause(for: 15 * 60) }
+                    Button("1 hour") { suggestionSettings.pause(for: 60 * 60) }
+                    Button("Until tomorrow") { suggestionSettings.pauseUntilTomorrow() }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .font(.caption)
+                .controlSize(.small)
+            }
         }
     }
 
@@ -54,9 +103,18 @@ struct MenuBarView: View {
             Text("Cotabby")
                 .font(.headline)
 
+            // Ko-fi tip jar lives next to the title because the menu bar surface is the most
+            // frequented entry point. Using a Link lets SwiftUI hand the URL to NSWorkspace and
+            // dismiss the popover; a Button would need its own handler plumbing for the same effect.
+            if let kofiURL = URL(string: "https://ko-fi.com/cotabby") {
+                Link("Support Us", destination: kofiURL)
+                    .buttonStyle(.borderless)
+                    .font(.subheadline)
+            }
+
             Spacer(minLength: 0)
 
-            Button("Report Bug / Feedback", action: onReportFeedback)
+            Button("Report Bug", action: onReportFeedback)
                 .buttonStyle(.borderless)
                 .font(.subheadline)
         }
@@ -89,20 +147,16 @@ struct MenuBarView: View {
                         .toggleStyle(.switch)
                         .controlSize(.small)
                 }
+
+                pauseControlRow
             }
 
             Divider()
 
             // Context-shaping toggles that change what the model is fed.
-            Group {
-                Toggle("Include Clipboard Context", isOn: clipboardContextEnabledBinding)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-
-                Toggle("Allow Multi-line Suggestions", isOn: multiLineEnabledBinding)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-            }
+            Toggle("Include Clipboard Context", isOn: clipboardContextEnabledBinding)
+                .toggleStyle(.switch)
+                .controlSize(.small)
 
             Divider()
 
@@ -143,16 +197,6 @@ struct MenuBarView: View {
                     .pickerStyle(.menu)
                 }
 
-                MenuBarPickerRow(title: "Display") {
-                    Picker("Display", selection: mirrorPreferenceBinding) {
-                        ForEach(MirrorPreference.allCases) { preference in
-                            Text(preference.displayLabel)
-                                .tag(preference)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                }
             }
         }
         .padding(.bottom, 12)
@@ -244,8 +288,13 @@ struct MenuBarView: View {
             .padding(.bottom, 10)
 
         HStack {
-            Button("Settings", action: onOpenSettings)
-                .buttonStyle(.borderless)
+            Button("Settings") {
+                // Dismiss the popover before opening the Settings window so the popover doesn't
+                // remain on top of (and obscure) the Settings pane. See issue #455.
+                popoverDismisser.dismiss()
+                onOpenSettings()
+            }
+            .buttonStyle(.borderless)
 
             Button("Check for Updates") {
                 appUpdateManager.checkForUpdates()
@@ -312,26 +361,12 @@ struct MenuBarView: View {
         )
     }
 
-    private var multiLineEnabledBinding: Binding<Bool> {
-        Binding(
-            get: { suggestionSettings.isMultiLineEnabled },
-            set: { suggestionSettings.setMultiLineEnabled($0) }
-        )
-    }
-
     private var selectedWordCountPresetBinding: Binding<SuggestionWordCountPreset> {
         Binding(
             get: { suggestionSettings.selectedWordCountPreset },
             set: { preset in
                 suggestionSettings.selectWordCountPreset(preset)
             }
-        )
-    }
-
-    private var mirrorPreferenceBinding: Binding<MirrorPreference> {
-        Binding(
-            get: { suggestionSettings.mirrorPreference },
-            set: { suggestionSettings.setMirrorPreference($0) }
         )
     }
 
@@ -365,4 +400,25 @@ struct MenuBarView: View {
         permissionManager.requiredPermissionsGranted
     }
 
+}
+
+/// Applies the menu panel's fill at the native window-container level when the OS supports it.
+///
+/// `MenuBarView` owns the menu contents, but SwiftUI owns the actual `NSWindow` created by
+/// `MenuBarExtra`. Keeping this as a dedicated modifier gives the UI a narrow boundary for one
+/// platform-specific presentation rule without mixing availability checks into the main view body.
+private struct MenuBarWindowBackgroundModifier: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            // MenuBarExtra's `.window` style already gives us native rounded window chrome.
+            // On newer macOS builds, leaving the root fill implicit can make SwiftUI draw a
+            // second, inset window-colored rectangle inside that chrome. A container background
+            // belongs to the hosting window instead of this view's local bounds, so the fill
+            // reaches the native rounded frame and avoids the double-border look.
+            content.containerBackground(.windowBackground, for: .window)
+        } else {
+            content
+        }
+    }
 }

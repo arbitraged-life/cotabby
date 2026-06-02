@@ -103,6 +103,12 @@ enum RuntimeModelCatalog {
             return "tabby-1-pro"
         case "SmolLM2-135M-Instruct-q8_0.gguf":
             return "tabby-1-nano"
+        case "Qwen3-1.7B-Q4_K_M.gguf":
+            return "Qwen 3 1.7B"
+        case "gemma-3-4b-it-Q4_K_M.gguf":
+            return "Gemma 3 4B"
+        case "gemma-3-1b-it-Q4_K_M.gguf":
+            return "Gemma 3 1B"
         default:
             return filename
         }
@@ -159,6 +165,39 @@ enum RuntimeModelCatalog {
             approximateSizeInGigabytes: 5.0,
             expectedSizeBytes: 4_977_169_568,
             sha256: "519b9793ed6ce0ff530f1b7c96e848e08e49e7af4d57bb97f76215963a54146d"
+        ),
+        DownloadableRuntimeModel(
+            filename: "gemma-3-4b-it-Q4_K_M.gguf",
+            displayName: displayName(for: "gemma-3-4b-it-Q4_K_M.gguf"),
+            downloadURL: URL(
+                string:
+                    "https://huggingface.co/unsloth/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q4_K_M.gguf?download=true"
+            )!,
+            approximateSizeInGigabytes: 2.3,
+            expectedSizeBytes: 2_489_894_016,
+            sha256: "04a43a22e8d2003deda5acc262f68ec1005fa76c735a9962a8c77042a74a7d19"
+        ),
+        DownloadableRuntimeModel(
+            filename: "Qwen3-1.7B-Q4_K_M.gguf",
+            displayName: displayName(for: "Qwen3-1.7B-Q4_K_M.gguf"),
+            downloadURL: URL(
+                string:
+                    "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf?download=true"
+            )!,
+            approximateSizeInGigabytes: 1.0,
+            expectedSizeBytes: 1_107_409_472,
+            sha256: "b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897"
+        ),
+        DownloadableRuntimeModel(
+            filename: "gemma-3-1b-it-Q4_K_M.gguf",
+            displayName: displayName(for: "gemma-3-1b-it-Q4_K_M.gguf"),
+            downloadURL: URL(
+                string:
+                    "https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf?download=true"
+            )!,
+            approximateSizeInGigabytes: 0.8,
+            expectedSizeBytes: 806_058_272,
+            sha256: "8270790f3ab69fdfe860b7b64008d9a19986d8df7e407bb018184caa08798ebd"
         )
     ]
 }
@@ -178,6 +217,9 @@ struct LlamaRuntimeConfiguration: Equatable, Sendable {
         preferredModelNames: [
             "gemma-4-E4B-it-Q4_K_M.gguf",
             "gemma-4-E2B-it-Q4_K_M.gguf",
+            "gemma-3-4b-it-Q4_K_M.gguf",
+            "Qwen3-1.7B-Q4_K_M.gguf",
+            "gemma-3-1b-it-Q4_K_M.gguf",
             "Qwen3-0.6B-Q4_K_M.gguf",
             "SmolLM2-135M-Instruct-q8_0.gguf"
         ],

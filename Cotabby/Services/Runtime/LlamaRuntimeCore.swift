@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 import CotabbyInference
 
 /// File overview:
@@ -24,21 +25,22 @@ struct PreparedLlamaRuntime: Sendable {
 }
 
 nonisolated final class LlamaRuntimeCore: @unchecked Sendable {
-    private var engine = CotabbyInferenceEngine()
-    private var preparedRuntime: PreparedLlamaRuntime?
+    // internal access for tree decode extension
+    var engine = CotabbyInferenceEngine()
+    var preparedRuntime: PreparedLlamaRuntime?
 
-    private let autocompleteLock = NSLock()
-    private var autocompleteSequenceID: Int32 = -1
-    private var autocompletePromptBytes: [UInt8] = []
-    private var autocompletePromptTokens: [Int32] = []
-    private var autocompleteSamplingFingerprint: SamplingFingerprint?
+    let autocompleteLock = NSLock()
+    var autocompleteSequenceID: Int32 = -1
+    var autocompletePromptBytes: [UInt8] = []
+    var autocompletePromptTokens: [Int32] = []
+    var autocompleteSamplingFingerprint: SamplingFingerprint?
 
     /// Coordinates model lifecycle with in-flight operations. `generate()` and `summarize()`
     /// increment the active count on entry and decrement on exit. `shutdown()` sets the
     /// shutting-down flag and blocks until all active operations finish before unloading.
-    private let lifecycleCondition = NSCondition()
-    private var activeOperationCount = 0
-    private var isShuttingDown = false
+    let lifecycleCondition = NSCondition()
+    var activeOperationCount = 0
+    var isShuttingDown = false
 
     // MARK: - Model lifecycle
 
@@ -56,6 +58,15 @@ nonisolated final class LlamaRuntimeCore: @unchecked Sendable {
             shutdown()
         }
 
+        CotabbyLogger.runtime.info(
+            "Loading model",
+            metadata: [
+                "model_path": .string(resolvedRuntime.modelFileURL.path),
+                "context_window_tokens": .stringConvertible(configuration.contextWindowTokens),
+                "batch_size": .stringConvertible(configuration.batchSize),
+                "gpu_layers": .stringConvertible(configuration.gpuLayerCount)
+            ]
+        )
         let status = engine.loadModel(
             resolvedRuntime.modelFileURL.path,
             configuration.gpuLayerCount,
@@ -64,6 +75,13 @@ nonisolated final class LlamaRuntimeCore: @unchecked Sendable {
         )
 
         guard status == .ok else {
+            CotabbyLogger.runtime.error(
+                "Model load failed",
+                metadata: [
+                    "model": .string(resolvedRuntime.modelDisplayName),
+                    "model_path": .string(resolvedRuntime.modelFileURL.path)
+                ]
+            )
             throw LlamaRuntimeError.unavailable(
                 "Unable to load \(resolvedRuntime.modelDisplayName) with CotabbyInferenceEngine."
             )
@@ -78,6 +96,17 @@ nonisolated final class LlamaRuntimeCore: @unchecked Sendable {
             backendName: "CotabbyInferenceEngine (llama.cpp in-process)"
         )
         self.preparedRuntime = result
+        CotabbyLogger.runtime.info(
+            "Model loaded",
+            metadata: [
+                "model": .string(resolvedRuntime.modelDisplayName),
+                "context_window_tokens": .stringConvertible(result.contextWindowTokens),
+                "batch_size": .stringConvertible(result.batchSize),
+                "threads": .stringConvertible(result.threadCount),
+                "gpu_layers": .stringConvertible(result.gpuLayerCount),
+                "backend": .string(result.backendName)
+            ]
+        )
         return result
     }
 
@@ -87,6 +116,7 @@ nonisolated final class LlamaRuntimeCore: @unchecked Sendable {
     /// Holds `autocompleteLock` for the full call to prevent concurrent KV cache mutation.
     func generate(
         prompt: String,
+        chatPrompt: LlamaPromptRenderer.ChatPrompt? = nil,
         cachedPrefixBytes: Int? = nil,
         options: LlamaGenerationOptions
     ) throws -> String {
@@ -109,11 +139,30 @@ nonisolated final class LlamaRuntimeCore: @unchecked Sendable {
             lifecycleCondition.unlock()
         }
 
+        // Prefer the model's own chat template when it ships one and the caller supplied a
+        // role-split prompt; otherwise fall back to the raw single-string path that base models
+        // need. Both branches derive `promptBytes` from the SAME string they tokenize, so the
+        // KV-cache reuse comparison downstream stays self-consistent (the external byte hint is
+        // only ever used as an upper bound via `min`, so a mismatched hint clamps reuse safely).
         let promptBytes = Array(prompt.utf8)
         let allPromptTokens = tokenize(prompt)
         guard !allPromptTokens.isEmpty else {
+            CotabbyLogger.runtime.error(
+                "Tokenization returned no prompt tokens",
+                metadata: ["prompt_bytes": .stringConvertible(promptBytes.count)]
+            )
             throw LlamaRuntimeError.generationFailed("Tokenization returned no prompt tokens.")
         }
+        CotabbyLogger.runtime.debug(
+            "Decode start",
+            metadata: [
+                "kind": .string("generate"),
+                "prompt_style": .string("raw"),
+                "prompt_tokens": .stringConvertible(allPromptTokens.count),
+                "max_tokens": .stringConvertible(options.maxPredictionTokens),
+                "cached_prefix_bytes": .string(cachedPrefixBytes.map(String.init) ?? "none")
+            ]
+        )
 
         let maxPromptTokens = max(1, preparedRuntime.contextWindowTokens - options.maxPredictionTokens)
         let promptTokens: [Int32]
@@ -148,23 +197,44 @@ nonisolated final class LlamaRuntimeCore: @unchecked Sendable {
         }
 
         var generatedText = ""
+        var tokensGenerated = 0
+        var stopReason = "budget_exhausted"
 
         for _ in 0 ..< options.maxPredictionTokens {
             // Cooperative cancellation: when the wrapping Task is cancelled (caller hit a new
             // keystroke, focus changed, Compose started), bail before the next sampleNext call so
             // we release `autocompleteLock` instead of running the full prediction budget and
             // making the next autocomplete wait behind us.
-            if Task.isCancelled { break }
+            if Task.isCancelled {
+                stopReason = "cancelled"
+                break
+            }
 
             let result = engine.sampleNext(sequenceID)
 
-            if result.was_cancelled || result.is_eos {
+            if result.was_cancelled {
+                stopReason = "engine_cancelled"
+                break
+            }
+            if result.is_eos {
+                stopReason = "eos"
                 break
             }
 
             let piece = Self.extractPiece(result)
             generatedText += piece
+            tokensGenerated += 1
         }
+
+        CotabbyLogger.runtime.debug(
+            "Decode end",
+            metadata: [
+                "kind": .string("generate"),
+                "tokens_generated": .stringConvertible(tokensGenerated),
+                "chars_generated": .stringConvertible(generatedText.count),
+                "stop_reason": .string(stopReason)
+            ]
+        )
 
         return generatedText
     }
@@ -241,6 +311,10 @@ nonisolated final class LlamaRuntimeCore: @unchecked Sendable {
         defer { autocompleteLock.unlock() }
 
         if autocompleteSequenceID >= 0 {
+            CotabbyLogger.runtime.debug(
+                "Prompt cache reset",
+                metadata: ["sequence_id": .stringConvertible(autocompleteSequenceID)]
+            )
             engine.destroySequence(autocompleteSequenceID)
         }
         autocompleteSequenceID = -1
@@ -257,6 +331,12 @@ nonisolated final class LlamaRuntimeCore: @unchecked Sendable {
     /// with `engine.unloadModel()` so the caller (typically `applicationWillTerminate`) does not
     /// hang the main thread on a runaway generation. A nil timeout waits indefinitely.
     func shutdown(timeoutSeconds: TimeInterval? = nil) {
+        CotabbyLogger.runtime.info(
+            "Runtime shutdown requested",
+            metadata: [
+                "timeout_seconds": .string(timeoutSeconds.map { String(format: "%.1f", $0) } ?? "unbounded")
+            ]
+        )
         lifecycleCondition.lock()
         isShuttingDown = true
 
@@ -275,6 +355,7 @@ nonisolated final class LlamaRuntimeCore: @unchecked Sendable {
         resetPromptCache()
         engine.unloadModel()
         preparedRuntime = nil
+        CotabbyLogger.runtime.info("Runtime shutdown complete")
 
         lifecycleCondition.lock()
         isShuttingDown = false
@@ -286,7 +367,7 @@ nonisolated final class LlamaRuntimeCore: @unchecked Sendable {
     /// Returns a sequence ID with KV state representing the prompt. Reuses cached KV when the
     /// new prompt shares a validated prefix with the previous one.
     /// Must be called while holding `autocompleteLock`.
-    private func obtainAutocompleteSequence(
+    func obtainAutocompleteSequence(
         promptTokens: [Int32],
         promptBytes: [UInt8],
         fingerprint: SamplingFingerprint,
@@ -340,7 +421,7 @@ nonisolated final class LlamaRuntimeCore: @unchecked Sendable {
         return try buildFreshSequence(promptTokens: promptTokens, options: options)
     }
 
-    private func buildFreshSequence(
+    func buildFreshSequence(
         promptTokens: [Int32],
         options: LlamaGenerationOptions
     ) throws -> Int32 {
@@ -363,14 +444,14 @@ nonisolated final class LlamaRuntimeCore: @unchecked Sendable {
 
     // MARK: - Private: helpers
 
-    private func tokenize(_ text: String) -> [Int32] {
+    func tokenize(_ text: String) -> [Int32] {
         let utf8Count = text.utf8.count
         guard utf8Count > 0 else { return [] }
         let vec = engine.tokenize(text, Int32(utf8Count))
         return Array(vec)
     }
 
-    private static func extractPiece(_ result: SampleResult) -> String {
+    static func extractPiece(_ result: SampleResult) -> String {
         guard let piece = result.piece, result.piece_length > 0 else { return "" }
         let buffer = UnsafeBufferPointer(
             start: UnsafeRawPointer(piece).assumingMemoryBound(to: UInt8.self),
@@ -379,7 +460,7 @@ nonisolated final class LlamaRuntimeCore: @unchecked Sendable {
         return String(bytes: buffer, encoding: .utf8) ?? ""
     }
 
-    private static func samplingConfig(from options: LlamaGenerationOptions) -> SamplingConfig {
+    static func samplingConfig(from options: LlamaGenerationOptions) -> SamplingConfig {
         SamplingConfig(
             max_prediction_tokens: Int32(options.maxPredictionTokens),
             temperature: Float(options.temperature),
@@ -406,7 +487,7 @@ nonisolated final class LlamaRuntimeCore: @unchecked Sendable {
     }
 
     /// Generation knobs that intentionally break KV reuse when changed.
-    private struct SamplingFingerprint: Equatable {
+    struct SamplingFingerprint: Equatable {
         let maxPredictionTokens: Int
         let temperature: Double
         let topK: Int

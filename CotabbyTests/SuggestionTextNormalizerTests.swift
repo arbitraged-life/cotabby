@@ -22,6 +22,33 @@ final class SuggestionTextNormalizerTests: XCTestCase {
         XCTAssertEqual(normalized, " useful continuation")
     }
 
+    func test_normalize_rejectsEllipsisPlaceholder() {
+        // Small models sometimes emit "..." or "…" as a placeholder instead of real continuation
+        // text. The normalizer must drop these so nothing junk lands on Tab. (#508)
+        let request = CotabbyTestFixtures.suggestionRequest(
+            prefixText: "when typing a wo",
+            prompt: "PROMPT",
+            precedingText: "when typing a wo"
+        )
+
+        for placeholder in ["...", "…", " ... ", ". . .", "....."] {
+            let normalized = SuggestionTextNormalizer.normalize(placeholder, for: request)
+            XCTAssertEqual(normalized, "", "expected placeholder \"\(placeholder)\" to be dropped")
+        }
+    }
+
+    func test_normalize_keepsSingleClosingPunctuation() {
+        // A lone legitimate closing glyph is real continuation and must survive the placeholder gate.
+        let request = CotabbyTestFixtures.suggestionRequest(
+            prefixText: "print(value",
+            prompt: "PROMPT",
+            precedingText: "print(value"
+        )
+
+        let normalized = SuggestionTextNormalizer.normalize(")", for: request)
+        XCTAssertEqual(normalized, ")")
+    }
+
     func test_normalize_removesPrefixEchoWhenPromptWasNotEchoed() {
         let request = CotabbyTestFixtures.suggestionRequest(
             prefixText: "Hello world",
@@ -133,5 +160,87 @@ final class SuggestionTextNormalizerTests: XCTestCase {
         let normalized = SuggestionTextNormalizer.normalize("world", for: request)
 
         XCTAssertEqual(normalized, "")
+    }
+
+    func test_normalize_stripsLeadingInlineScaffoldingLabel() {
+        // Caret sits right after a space, so the exposed leading space is dropped and the
+        // continuation surfaces cleanly without the echoed "Text before caret:" header.
+        let request = CotabbyTestFixtures.suggestionRequest(
+            prefixText: "I am ",
+            prompt: "PROMPT",
+            precedingText: "I am "
+        )
+
+        let normalized = SuggestionTextNormalizer.normalize(
+            "Text before caret: going to the store",
+            for: request
+        )
+
+        XCTAssertEqual(normalized, "going to the store")
+    }
+
+    func test_normalize_stripsHallucinatedAppLabel() {
+        let request = CotabbyTestFixtures.suggestionRequest(
+            prefixText: "send the ",
+            prompt: "PROMPT",
+            precedingText: "send the "
+        )
+
+        let normalized = SuggestionTextNormalizer.normalize(
+            "App: report by Friday",
+            for: request
+        )
+
+        XCTAssertEqual(normalized, "report by Friday")
+    }
+
+    func test_normalize_stripsStackedScaffoldingLabelLines() {
+        // Stacked labels across newlines must be peeled before the single-line collapse, otherwise
+        // the collapse would keep only the first label line ("Task:") and the real text would be
+        // lost.
+        let request = CotabbyTestFixtures.suggestionRequest(
+            prefixText: "The ",
+            prompt: "PROMPT",
+            precedingText: "The "
+        )
+
+        let normalized = SuggestionTextNormalizer.normalize(
+            "Task:\nText before caret:\nquick brown fox",
+            for: request
+        )
+
+        XCTAssertEqual(normalized, "quick brown fox")
+    }
+
+    func test_normalize_keepsLegitimateNonLabelColon() {
+        // A colon that is not a known scaffolding label is real user content and must survive.
+        let request = CotabbyTestFixtures.suggestionRequest(
+            prefixText: "my list ",
+            prompt: "PROMPT",
+            precedingText: "my list "
+        )
+
+        let normalized = SuggestionTextNormalizer.normalize(
+            "TODO: buy milk",
+            for: request
+        )
+
+        XCTAssertEqual(normalized, "TODO: buy milk")
+    }
+
+    func test_normalize_keepsLabelLikeTextWhenNotLeading() {
+        // "Task:" appears mid-continuation, not at the start, so it is real text and stays.
+        let request = CotabbyTestFixtures.suggestionRequest(
+            prefixText: "finish the ",
+            prompt: "PROMPT",
+            precedingText: "finish the "
+        )
+
+        let normalized = SuggestionTextNormalizer.normalize(
+            "first Task: review",
+            for: request
+        )
+
+        XCTAssertEqual(normalized, "first Task: review")
     }
 }

@@ -20,14 +20,9 @@ enum SuggestionTextNormalizer {
         normalized = normalized.replacingOccurrences(of: "<|im_end|>", with: "")
         normalized = normalized.replacingOccurrences(of: "<|im_start|>", with: "")
 
-        // Thinking-capable models may emit <think>…</think> reasoning blocks. Strip complete
-        // blocks first, then any trailing open tag left when generation hit the token limit.
-        if let thinkRange = normalized.range(of: "<think>[\\s\\S]*?</think>", options: .regularExpression) {
-            normalized.replaceSubrange(thinkRange, with: "")
-        }
-        if let openTag = normalized.range(of: "<think>[\\s\\S]*", options: .regularExpression) {
-            normalized.replaceSubrange(openTag, with: "")
-        }
+        // Thinking-capable models may emit <think>…</think> reasoning blocks. Strip them here so
+        // the reasoning text never reaches the continuation logic below.
+        normalized = stripThinkBlocks(normalized)
 
         for prompt in [request.prompt] + promptEchoCandidates {
             if !prompt.isEmpty, normalized.hasPrefix(prompt) {
@@ -53,6 +48,18 @@ enum SuggestionTextNormalizer {
         // continuation that followed.
         normalized = normalized.trimmingCharacters(in: .newlines)
 
+        // Backstop for prompt-scaffolding hallucination. Small instruct models sometimes parrot the
+        // prompt's section headers ("App:", "Text before caret:", "Continuation:") as the first
+        // thing they emit: sometimes as their own line, sometimes inline before the real text, and
+        // sometimes as labels the model invents that were never in our prompt at all. None of these
+        // are valid ghost text. Stripping a leading run of known labels runs before the single-line
+        // collapse so a model that stacks "Task:\nText before caret:\nreal continuation" still
+        // surfaces the real continuation instead of collapsing to the first label line. This is a
+        // best-effort catch, not the fix: the durable fix is feeding instruct models their own chat
+        // template so instructions never read as content in the first place.
+        normalized = stripLeadingScaffoldingLabels(normalized)
+        normalized = normalized.trimmingCharacters(in: .newlines)
+
         if request.isMultiLineEnabled {
             // Multi-line mode: keep content up to the first blank-line boundary (double newline)
             // to prevent runaway paragraph generation while still allowing multi-line completions.
@@ -70,8 +77,10 @@ enum SuggestionTextNormalizer {
         // If the model starts by repeating text that already exists after the caret, we treat the
         // suggestion as unusable. Showing only the remainder often produces confusing mid-word
         // ghosts, so the coordinator should regenerate instead.
-        if !request.context.trailingText.isEmpty,
-            normalized.hasPrefix(request.context.trailingText) {
+        if TrailingDuplicationFilter.duplicatesTrailingText(
+            normalized,
+            trailingText: request.context.trailingText
+        ) {
             return ""
         }
 
@@ -87,12 +96,67 @@ enum SuggestionTextNormalizer {
         // When preceding text does NOT end with whitespace, the model's leading space (or the
         // inter-word space exposed by echo suppression) passes through — it's the word boundary
         // the user needs.
-        if let lastScalar = request.context.precedingText.unicodeScalars.last,
-           CharacterSet.whitespaces.contains(lastScalar) {
-            normalized = String(normalized.drop(while: { $0.isWhitespace }))
+        //
+        // HOWEVER: if the preceding text ends mid-word (last character is alphanumeric) and the
+        // completion starts with a space, the space is a FIM artifact that would insert a gap
+        // mid-word (e.g. "des" + " cription" → "des cription"). Strip it so the continuation
+        // attaches cleanly to the partial word.
+        if let lastScalar = request.context.precedingText.unicodeScalars.last {
+            if CharacterSet.whitespaces.contains(lastScalar) {
+                normalized = String(normalized.drop(while: { $0.isWhitespace }))
+            } else if CharacterSet.alphanumerics.contains(lastScalar),
+                      normalized.first?.isWhitespace == true {
+                normalized = String(normalized.drop(while: { $0.isWhitespace }))
+            }
+        }
+
+        // Reject placeholder-only output. Small instruct models (e.g. Gemma 2B) sometimes emit an
+        // ellipsis ("...", "…") or a bare run of punctuation as a stand-in for "I have nothing to
+        // add" instead of real continuation text. Inserting that on Tab is never useful, so we drop
+        // it and let the coordinator regenerate. (#508)
+        if isPlaceholderOnly(normalized) {
+            return ""
+        }
+
+        // Final safety gate: never surface control characters, replacement glyphs, or
+        // whitespace-only output as ghost text. Returning empty makes the coordinator treat this
+        // as "no suggestion" and regenerate rather than insert junk on Tab.
+        guard InsertionSafetyGate.isSafeToInsert(normalized) else {
+            return ""
         }
 
         return normalized
+    }
+
+    /// True when the suggestion is a placeholder rather than real continuation text. Catches the
+    /// ellipsis stand-ins small models emit ("...", "…", ". . .") and longer punctuation-only runs,
+    /// while still allowing a single legitimate closing glyph (")", ".", "?", "\"") through. (#508)
+    private static func isPlaceholderOnly(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+
+        let hasAlphanumeric = trimmed.contains { $0.isLetter || $0.isNumber }
+        guard !hasAlphanumeric else { return false }
+
+        // No alphanumerics. Treat any ellipsis form, or any multi-character punctuation/whitespace
+        // run, as a placeholder. A single punctuation char (e.g. a closing bracket) is left alone.
+        if trimmed.contains("…") || trimmed.contains("..") {
+            return true
+        }
+        return trimmed.count > 1
+    }
+
+    /// Removes `<think>…</think>` reasoning blocks: complete blocks first, then any dangling open
+    /// tag left when generation hit the token limit before the block was closed.
+    private static func stripThinkBlocks(_ text: String) -> String {
+        var result = text
+        if let complete = result.range(of: "<think>[\\s\\S]*?</think>", options: .regularExpression) {
+            result.replaceSubrange(complete, with: "")
+        }
+        if let dangling = result.range(of: "<think>[\\s\\S]*", options: .regularExpression) {
+            result.replaceSubrange(dangling, with: "")
+        }
+        return result
     }
 
     /// Finds the longest suffix of `precedingText` (at any word offset) that matches a prefix
@@ -143,5 +207,48 @@ enum SuggestionTextNormalizer {
         let lastEchoedWord = suggestionWords[bestOverlap - 1]
         let afterLastEchoed = lastEchoedWord.endIndex
         return String(suggestion[afterLastEchoed...])
+    }
+
+    /// Section-header labels Cotabby's prompts use, plus close variants small models tend to
+    /// hallucinate. Matching is anchored to this known set so legitimate user text that merely
+    /// contains a colon ("Note: buy milk", "TODO: ship it") is never treated as scaffolding.
+    /// Ordered longest-first at match time so "Text before the caret:" wins over "Text before".
+    private static let scaffoldingLabels: [String] = [
+        "Text before the caret:",
+        "Text before caret:",
+        "Text after the caret:",
+        "Text after caret:",
+        "User Profile Context:",
+        "Your style preferences:",
+        "Final instruction:",
+        "Screen context:",
+        "Screen content:",
+        "User's clipboard:",
+        "Continuation:",
+        "Application:",
+        "Task:",
+        "App:"
+    ]
+
+    /// Removes a leading run of known prompt-scaffolding labels (see `scaffoldingLabels`), whether
+    /// each sits on its own line or inline before the continuation. Only labels at the very start
+    /// are stripped; a label appearing later in the text is left alone because by then it is far
+    /// more likely to be real user content than echoed scaffolding.
+    private static func stripLeadingScaffoldingLabels(_ text: String) -> String {
+        let labelsByLengthDescending = scaffoldingLabels.sorted { $0.count > $1.count }
+        var working = text
+
+        while true {
+            // Look past leading whitespace/newlines to find the first real token. We only commit to
+            // dropping that whitespace if a label actually matches; otherwise `working` is returned
+            // untouched so the caller's existing leading-space handling still sees the original.
+            let leading = String(working.drop(while: { $0.isWhitespace }))
+            guard let label = labelsByLengthDescending.first(where: {
+                leading.range(of: $0, options: [.caseInsensitive, .anchored]) != nil
+            }) else {
+                return working
+            }
+            working = String(leading.dropFirst(label.count))
+        }
     }
 }

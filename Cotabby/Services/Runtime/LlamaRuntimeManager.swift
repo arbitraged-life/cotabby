@@ -23,6 +23,14 @@ final class LlamaRuntimeManager: ObservableObject {
     private var cachedRuntime: PreparedLlamaRuntime?
     private var selectedModelFilename: String?
 
+    /// Read-only view of the model currently selected for autocomplete generation. Used by
+    /// downstream observers (the performance metrics recorder) that want to label a recorded
+    /// request with the actual GGUF filename, e.g. `Qwen3-0.6B-Q8_0.gguf`. Returns nil when no
+    /// model has been configured yet.
+    var currentModelFilename: String? {
+        selectedModelFilename
+    }
+
     convenience init() {
         self.init(
             configuration: .default,
@@ -90,6 +98,7 @@ final class LlamaRuntimeManager: ObservableObject {
     /// still validates the token prefix before trusting any native KV state.
     func generate(
         prompt: String,
+        chatPrompt: LlamaPromptRenderer.ChatPrompt? = nil,
         cachedPrefixBytes: Int? = nil,
         options: LlamaGenerationOptions
     ) async throws -> String {
@@ -104,6 +113,7 @@ final class LlamaRuntimeManager: ObservableObject {
             let task = Task.detached {
                 try core.generate(
                     prompt: prompt,
+                    chatPrompt: chatPrompt,
                     cachedPrefixBytes: cachedPrefixBytes,
                     options: options
                 )
@@ -134,6 +144,34 @@ final class LlamaRuntimeManager: ObservableObject {
             let runtimeError = LlamaRuntimeError.generationFailed(error.localizedDescription)
             diagnostics.lastError = runtimeError.localizedDescription
             throw runtimeError
+        }
+    }
+
+    /// Generates multiple candidates using tree decode (shared prefix, diverse sampling).
+    /// Falls back to single-candidate if tree decode is disabled or fails.
+    func generateTree(
+        prompt: String,
+        cachedPrefixBytes: Int? = nil,
+        options: LlamaGenerationOptions,
+        config: TreeDecodeConfiguration
+    ) async throws -> TreeDecodeResult {
+        _ = try await preparedRuntime()
+
+        let core = self.core
+        let task = Task.detached {
+            try core.generateTree(
+                prompt: prompt,
+                cachedPrefixBytes: cachedPrefixBytes,
+                options: options,
+                config: config
+            )
+        }
+        return try await withTaskCancellationHandler {
+            let result = try await task.value
+            try Task.checkCancellation()
+            return result
+        } onCancel: {
+            task.cancel()
         }
     }
 

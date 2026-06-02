@@ -25,7 +25,11 @@ enum SuggestionRequestFactory {
     /// `SuggestionTextNormalizer` applies deterministic space management on the output side.
     static func shouldGenerateSuggestion(for precedingText: String) -> Bool {
         let trimmed = precedingText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmed.isEmpty
+        guard !trimmed.isEmpty else { return false }
+        // Suppress when the cursor is immediately after a U+FFFC object replacement character
+        // (embedded figure in Word with square wrap). Inserting text here displaces the figure. (#487)
+        if precedingText.last == "\u{FFFC}" { return false }
+        return true
     }
 
     /// Builds the generation request plus the exact prompt preview used by Cotabby's diagnostics UI.
@@ -34,7 +38,8 @@ enum SuggestionRequestFactory {
         settings: SuggestionSettingsSnapshot,
         configuration: SuggestionConfiguration,
         clipboardContext: String? = nil,
-        visualContextSummary: String? = nil
+        visualContextSummary: String? = nil,
+        extraPromptHints: [String] = []
     ) -> SuggestionRequestBuildResult {
         let prefixText = truncatedPromptPrefix(
             from: context.precedingText,
@@ -45,6 +50,13 @@ enum SuggestionRequestFactory {
         let userName = activeUserName(settings: settings)
         // Already normalized (trimmed/deduped/capped) by SuggestionSettingsModel.setRules.
         let customRules = settings.customRules
+        // The settings model length-caps but does NOT trim whitespace (trimming on every keystroke
+        // would prevent the user from typing a space at the end of a word in the editor). Do the
+        // trim here, once per request, and collapse a whitespace-only body back to nil so renderers
+        // skip the section heading entirely.
+        let trimmedExtendedContext = settings.extendedContext
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let activeExtendedContext = trimmedExtendedContext.isEmpty ? nil : trimmedExtendedContext
         // nil when the user declared no languages — the renderers then just match the surrounding text.
         let languageInstruction = LanguageCatalog.promptInstruction(for: settings.responseLanguages)
         let boundedClipboardContext = activeClipboardContext(
@@ -55,12 +67,50 @@ enum SuggestionRequestFactory {
         let boundedVisualContextSummary = activeVisualContextSummary(
             rawSummary: visualContextSummary
         )
+
+        // Inject personalization vocabulary as a soft preference when strength > 0.
+        var effectiveRules = customRules
+        // Field-type / per-app soft hints resolved by FieldPolicyResolver. Appended as ordinary
+        // custom rules so they steer the model exactly like the user's own rules — gentle
+        // preferences, never hard structure. Empty for neutral fields, so behaviour is unchanged
+        // until a recognized field (code editor, terminal, chat, URL, search) is focused.
+        effectiveRules.append(contentsOf: extraPromptHints)
+        if settings.personalizationStrength > 0 {
+            let entries = InputHistoryStore.shared.recentEntries(limit: 500)
+            if !entries.isEmpty {
+                let vocab = PersonalizationEngine.buildVocabularyBias(from: entries, topN: 60)
+                if !vocab.isEmpty {
+                    let topWords = vocab.sorted { $0.value > $1.value }.map(\.key).prefix(30)
+                    effectiveRules.append(
+                        "The user frequently uses these words (prefer them when natural): "
+                            + topWords.joined(separator: ", ")
+                    )
+                }
+            }
+        }
+
         let prompt = LlamaPromptRenderer.prompt(
             prefixText: prefixText,
+            suffixText: truncatedSuffix(from: context.trailingText),
             applicationName: context.applicationName,
             completionLengthInstruction: completionLengthInstruction,
             userName: userName,
-            customRules: customRules,
+            customRules: effectiveRules,
+            extendedContext: activeExtendedContext,
+            languageInstruction: languageInstruction,
+            clipboardContext: boundedClipboardContext,
+            visualContextSummary: boundedVisualContextSummary
+        )
+        // Role-split variant for chat-template-capable local models. Built unconditionally and
+        // cheaply; the runtime decides per-model whether to use it or fall back to `prompt`.
+        let llamaChatPrompt = LlamaPromptRenderer.messages(
+            prefixText: prefixText,
+            suffixText: truncatedSuffix(from: context.trailingText),
+            applicationName: context.applicationName,
+            completionLengthInstruction: completionLengthInstruction,
+            userName: userName,
+            customRules: effectiveRules,
+            extendedContext: activeExtendedContext,
             languageInstruction: languageInstruction,
             clipboardContext: boundedClipboardContext,
             visualContextSummary: boundedVisualContextSummary
@@ -70,6 +120,7 @@ enum SuggestionRequestFactory {
             context: context,
             prefixText: prefixText,
             prompt: prompt,
+            llamaChatPrompt: llamaChatPrompt,
             generation: context.generation,
             maxPredictionTokens: activeMaxPredictionTokens(
                 configuration: configuration,
@@ -85,11 +136,13 @@ enum SuggestionRequestFactory {
             maxSuffixCharacters: configuration.maxSuffixCharacters,
             completionLengthInstruction: completionLengthInstruction,
             userName: userName,
-            customRules: customRules,
+            customRules: effectiveRules,
+            extendedContext: activeExtendedContext,
             languageInstruction: languageInstruction,
             clipboardContext: boundedClipboardContext,
             visualContextSummary: boundedVisualContextSummary,
-            isMultiLineEnabled: settings.isMultiLineEnabled
+            isMultiLineEnabled: settings.isMultiLineEnabled,
+            requestID: RequestID.generate()
         )
 
         return SuggestionRequestBuildResult(
@@ -110,6 +163,11 @@ enum SuggestionRequestFactory {
         configuration: SuggestionConfiguration,
         engine: SuggestionEngineKind = .llamaOpenSource
     ) -> String {
+        // Strip U+FFFC (object replacement character) used by Word for embedded figures with
+        // square text wrap. Leaving it in can cause the model to generate continuations that,
+        // when inserted, displace the figure. (#487)
+        let cleanedText = precedingText.replacingOccurrences(of: "\u{FFFC}", with: "")
+
         let maxCharacters: Int
         let maxWords: Int
         switch engine {
@@ -121,7 +179,7 @@ enum SuggestionRequestFactory {
             maxWords = configuration.maxPrefixWords
         }
 
-        let characterWindow = String(precedingText.suffix(maxCharacters))
+        let characterWindow = String(cleanedText.suffix(maxCharacters))
         let trailingWords = characterWindow
             .split(whereSeparator: { $0.isWhitespace })
             .suffix(maxWords)
@@ -135,6 +193,21 @@ enum SuggestionRequestFactory {
         settings: SuggestionSettingsSnapshot
     ) -> String? {
         settings.userName
+    }
+
+    /// Truncates trailing text to a reasonable window so the model gets after-caret context
+    /// without bloating the prompt. Returns nil for empty/whitespace-only suffix.
+    private static func truncatedSuffix(from trailingText: String) -> String? {
+        let trimmed = trailingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        // 500 chars — enough to see the paragraph/function boundary.
+        // Preserve newlines so the model can infer structure (code blocks, paragraphs).
+        let maxChars = 500
+        let window = String(trimmed.prefix(maxChars))
+        // Cap at ~30 lines to avoid runaway vertical content.
+        let lines = window.components(separatedBy: .newlines).prefix(30)
+        let result = lines.joined(separator: "\n")
+        return result.isEmpty ? nil : result
     }
 
     private static func activeClipboardContext(

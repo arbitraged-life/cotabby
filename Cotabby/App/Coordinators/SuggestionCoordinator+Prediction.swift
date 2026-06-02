@@ -13,22 +13,40 @@ extension SuggestionCoordinator {
             disabledAppBundleIdentifiers: settingsSnapshot.disabledAppBundleIdentifiers,
             inputMonitoringGranted: permissionManager.inputMonitoringGranted,
             screenRecordingGranted: permissionManager.screenRecordingGranted,
-            focusSnapshot: focusModel.snapshot
+            focusSnapshot: focusModel.snapshot,
+            pausedUntil: settingsSnapshot.pausedUntil
         ) {
             disablePredictions(reason: disabledReason)
             return
         }
 
+        // Per-app policy veto: password managers, secure fields, and any app the user has marked
+        // disabled in the compatibility table suppress completions entirely. This is an additional
+        // gate layered on top of the availability evaluator above — the evaluator owns global/
+        // permission/pause state; the resolved field policy owns app- and field-semantic rules.
+        guard resolvedFieldPolicy.completionsAllowed else {
+            disablePredictions(reason: "Completions disabled for this app or field by policy.")
+            return
+        }
+
+        // Context-aware debounce: the resolved field's DebounceProfile decides timing (aggressive
+        // for code editors, relaxed/terminal for shells, standard elsewhere), differentiated by the
+        // most recent input event. We never go below the user's configured debounce floor, so the
+        // policy can only *lengthen* the wait for noisy fields — it can't make Cotabby feel twitchier
+        // than the user asked for in Settings.
+        let policyDebounceMs = Int(adaptiveDebounce.debounceInterval(for: lastInputEvent) * 1000)
+        let effectiveDebounceMs = max(settingsSnapshot.debounceMilliseconds, policyDebounceMs)
+
         // Task cancellation in Swift is cooperative, so we also use an explicit work id.
         // That gives us strict "latest request wins" semantics even if an old task wakes up late.
         let workID = workController.replaceDebouncedWork(
-            delayMilliseconds: settingsSnapshot.debounceMilliseconds
+            delayMilliseconds: effectiveDebounceMs
         ) { [weak self] workID in
             await self?.generateFromCurrentFocus(workID: workID)
         }
 
         state = .debouncing
-        logStage("debouncing", workID: workID, message: "Waiting \(settingsSnapshot.debounceMilliseconds)ms before generating.")
+        logStage("debouncing", workID: workID, message: "Waiting \(effectiveDebounceMs)ms before generating.")
     }
 
     /// Refreshes focus after debounce, materializes a stable context, and starts generation.
@@ -52,7 +70,8 @@ extension SuggestionCoordinator {
             disabledAppBundleIdentifiers: settingsSnapshot.disabledAppBundleIdentifiers,
             inputMonitoringGranted: permissionManager.inputMonitoringGranted,
             screenRecordingGranted: permissionManager.screenRecordingGranted,
-            focusSnapshot: snapshot
+            focusSnapshot: snapshot,
+            pausedUntil: settingsSnapshot.pausedUntil
         ) {
             disablePredictions(reason: disabledReason)
             return
@@ -70,7 +89,37 @@ extension SuggestionCoordinator {
             return
         }
 
+        // Typo suppression: if enabled, check the current word for misspelling.
+        if settingsSnapshot.isTypoSuppressionEnabled,
+           let currentWord = TypoDetector.currentWord(from: rawContext.precedingText) {
+            let typoResult = TypoDetector.check(word: currentWord)
+            if typoResult.isTypo {
+                clearSuggestion()
+                if settingsSnapshot.isTypoCorrectionDisplayEnabled, let fix = typoResult.corrections.first {
+                    showTypoCorrection(typo: currentWord, correction: fix)
+                } else {
+                    hideOverlay(reason: "Overlay hidden because a typo was detected in the current word.")
+                }
+                state = .idle
+                return
+            }
+        }
+
         let context = interactionState.materializeContext(from: rawContext)
+
+        // Math expression short-circuit: if the text ends with `=`, try instant calculation
+        // before invoking the LLM. (#477)
+        if let mathResult = MathExpressionEvaluator.evaluate(precedingText: rawContext.precedingText) {
+            let suggestion = SuggestionResult(
+                generation: context.generation,
+                rawText: " " + mathResult,
+                text: " " + mathResult,
+                latency: 0
+            )
+            await apply(result: suggestion, requestContext: context, workID: workID)
+            return
+        }
+
         let visualContextSummary = visualContextCoordinator.excerpt(for: context)
         let rawClipboard = settingsSnapshot.isClipboardContextEnabled
             ? clipboardContextProvider.currentContext()
@@ -92,12 +141,14 @@ extension SuggestionCoordinator {
             settings: settingsSnapshot,
             configuration: configuration,
             clipboardContext: clipboardContext,
-            visualContextSummary: visualContextSummary
+            visualContextSummary: visualContextSummary,
+            extraPromptHints: resolvedFieldPolicy.promptHints
         )
         latestGenerationNumber = context.generation
         latestPromptPreview = requestBuildResult.promptPreview
         latestRawModelOutput = nil
         let request = requestBuildResult.request
+        latestRequestID = request.requestID
 
         state = .generating
         logStage(
@@ -119,7 +170,7 @@ extension SuggestionCoordinator {
                     return
                 }
 
-                await apply(result: result, workID: workID)
+                await apply(result: result, requestContext: request.context, workID: workID)
             } catch SuggestionClientError.cancelled {
                 return
             } catch {
@@ -133,7 +184,7 @@ extension SuggestionCoordinator {
     }
 
     /// Promotes a generated result to `ready` only when it is still fresh for the current field.
-    func apply(result: SuggestionResult, workID: UInt64) async {
+    func apply(result: SuggestionResult, requestContext: FocusedInputContext, workID: UInt64) async {
 
         guard workController.isCurrent(workID) else {
 
@@ -163,11 +214,27 @@ extension SuggestionCoordinator {
 
         let liveContext = interactionState.materializeContext(from: rawContext)
 
-        // Generation numbers are our stale-result guard. If the text changed while the model was
-        // thinking, we drop the answer instead of showing a suggestion for old content.
-        guard liveContext.generation == result.generation else {
+        // Consume the tail recorded by a final-chunk accept. It gets exactly one shot to be
+        // recognized as a stale echo on the regeneration scheduled right after acceptance.
+        let pendingAcceptedTail = lastAcceptedTail
+        lastAcceptedTail = nil
 
+        // Generation numbers are our stale-result guard. If the text changed while the model was
+        // thinking, the answer was generated against an older prefix. Before dropping it, try to
+        // salvage it by trimming the characters the user typed during the race (see
+        // `StaleCompletionReconciler`) and present the remaining tail instead of dropping it.
+        guard liveContext.generation == result.generation else {
             latestRawModelOutput = SuggestionDebugLogger.debugPreview(result.rawText)
+
+            if let salvage = salvagedStaleCompletion(
+                result: result,
+                requestContext: requestContext,
+                liveContext: liveContext
+            ) {
+                presentSalvagedCompletion(salvage, result: result, liveContext: liveContext, workID: workID)
+                return
+            }
+
             logStage(
                 "stale-drop",
                 workID: workID,
@@ -212,21 +279,51 @@ extension SuggestionCoordinator {
             return
         }
 
+        // A regeneration that only re-proposes the just-accepted tail while the field still shows the
+        // pre-acceptance text means our insert has not published yet. Drop it so the next accept can't
+        // re-insert the same word and spin the final-word loop.
+        if let pendingAcceptedTail,
+           SuggestionSessionReconciler.isStaleAcceptanceEcho(
+               resultText: result.text,
+               acceptedChunk: pendingAcceptedTail.text,
+               currentPrecedingText: liveContext.precedingText,
+               acceptedPrecedingText: pendingAcceptedTail.precedingText
+           ) {
+            clearSuggestion(clearDiagnostics: false)
+            hideOverlay(reason: "Overlay hidden because the regeneration only echoed the just-accepted text before the host published it.")
+            state = .idle
+            logStage(
+                "stale-accept-echo",
+                workID: workID,
+                generation: result.generation,
+                message: "Dropped a regeneration that re-proposed the just-accepted tail before the host published the insert.",
+                rawOutput: result.rawText,
+                normalizedOutput: result.text
+            )
+            return
+        }
+
         latestLatencyMilliseconds = Int(result.latency * 1000)
         latestGenerationNumber = liveContext.generation
         let session = interactionState.startSession(
             fullText: result.text,
             liveContext: liveContext,
-            latency: result.latency
+            latency: result.latency,
+            alternatives: result.alternatives
         )
+        UsageAnalytics.shared.recordSuggestionShown()
         applySessionDiagnostics(session, acceptanceAction: "Generated new suggestion.")
         state = .ready(text: session.remainingText, latency: session.latency)
 
+        let indicator: String? = session.totalCandidates > 1
+            ? "1/\(session.totalCandidates)"
+            : nil
         presentOverlay(
             text: session.remainingText,
             at: liveContext.caretRect,
             context: liveContext,
-            isRightToLeft: TextDirectionDetector.isRightToLeft(liveContext.precedingText)
+            isRightToLeft: TextDirectionDetector.isRightToLeft(liveContext.precedingText),
+            alternativeIndicator: indicator
         )
         logStage(
             "ready",
@@ -235,6 +332,75 @@ extension SuggestionCoordinator {
             message: "Accepted a non-empty normalized suggestion.",
             rawOutput: result.rawText,
             normalizedOutput: result.text
+        )
+
+        // If the user pressed Tab while this continuation was still regenerating, accept its first
+        // word now so rapid Tabbing keeps inserting words across the exhaustion boundary instead of
+        // stalling once the previous suggestion ran out. No-op when nothing was queued.
+        flushQueuedPostExhaustionAcceptIfNeeded()
+    }
+
+    /// Bridges live and request-time context to the pure salvage rules, applying the context-level
+    /// guardrails the string helper can't see: the result must belong to the same process, the field
+    /// must have no active selection, and the text after the caret must be unchanged. Any of those
+    /// failing means the user did more than type ahead, so the continuation no longer attaches.
+    private func salvagedStaleCompletion(
+        result: SuggestionResult,
+        requestContext: FocusedInputContext,
+        liveContext: FocusedInputContext
+    ) -> StaleCompletionReconciler.Reconciled? {
+        guard liveContext.processIdentifier == requestContext.processIdentifier else {
+            return nil
+        }
+        guard liveContext.selection.length == 0 else {
+            return nil
+        }
+        // When mid-line completions are enabled, skip the trailing-text equality check.
+        if !settingsSnapshot.isMidLineCompletionEnabled {
+            guard liveContext.trailingText == requestContext.trailingText else {
+                return nil
+            }
+        }
+
+        return StaleCompletionReconciler.reconcile(
+            continuation: result.text,
+            prefixAtRequest: requestContext.precedingText,
+            currentPrefix: liveContext.precedingText
+        )
+    }
+
+    /// Promotes a salvaged stale completion to a ready session anchored at the *current* field state.
+    /// Mirrors the fresh-result ready path but stamps the live generation (not the stale one) so the
+    /// session reconciles correctly as the user keeps typing through the recovered tail.
+    private func presentSalvagedCompletion(
+        _ salvage: StaleCompletionReconciler.Reconciled,
+        result: SuggestionResult,
+        liveContext: FocusedInputContext,
+        workID: UInt64
+    ) {
+        latestLatencyMilliseconds = Int(result.latency * 1000)
+        latestGenerationNumber = liveContext.generation
+        let session = interactionState.startSession(
+            fullText: salvage.text,
+            liveContext: liveContext,
+            latency: result.latency
+        )
+        applySessionDiagnostics(session, acceptanceAction: "Salvaged a stale suggestion after type-ahead.")
+        state = .ready(text: session.remainingText, latency: session.latency)
+        presentOverlay(
+            text: session.remainingText,
+            at: liveContext.caretRect,
+            context: liveContext,
+            isRightToLeft: TextDirectionDetector.isRightToLeft(liveContext.precedingText)
+        )
+        logStage(
+            "stale-salvage",
+            workID: workID,
+            generation: liveContext.generation,
+            message: "Salvaged a stale result by trimming \(salvage.typedSinceRequest.count) " +
+                "typed character(s) (\(salvage.confidence.rawValue)).",
+            rawOutput: result.rawText,
+            normalizedOutput: session.remainingText
         )
     }
 
@@ -383,6 +549,9 @@ extension SuggestionCoordinator {
 
     /// Clears the active suggestion and optionally preserves or drops diagnostic breadcrumbs.
     func clearSuggestion(clearDiagnostics: Bool = false) {
+        // Drop any pending accepted-tail guard whenever the suggestion state is torn down (user
+        // typed, focus changed, predictions disabled). The final-chunk accept re-sets it afterward.
+        lastAcceptedTail = nil
         latestSuggestionPreview = nil
         latestFullSuggestionPreview = nil
         latestRemainingSuggestionPreview = nil
@@ -396,14 +565,17 @@ extension SuggestionCoordinator {
             latestPromptPreview = nil
             latestRawModelOutput = nil
             latestGenerationNumber = nil
+            // Clear so the next session's terminal logStage doesn't carry the previous
+            // request_id forward. `+Acceptance.logStage` falls back to "req_none" on nil,
+            // preserving the join-key contract documented on `latestRequestID`.
+            latestRequestID = nil
         }
     }
 
     /// Cancels debounce/generation tasks and advances the work id so late completions are ignored.
     func cancelPredictionWork() {
+        hostPublishPollGeneration &+= 1
         workController.cancelAll()
-        hostPublishPollTask?.cancel()
-        hostPublishPollTask = nil
         postInsertionRefreshTask?.cancel()
         postInsertionRefreshTask = nil
     }

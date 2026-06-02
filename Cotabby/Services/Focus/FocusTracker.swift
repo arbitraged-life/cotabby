@@ -23,6 +23,13 @@ final class FocusTracker {
     private var pollInterval: TimeInterval
     private let permissionProvider: @MainActor () -> Bool
     private let ignoredBundleIdentifier: String?
+    /// Returns true when the focused app's bundle should NOT have its AX tree deep-walked. The
+    /// gate runs after the cheap system-wide focused-element query but before the expensive
+    /// candidate-elements walk in `FocusSnapshotResolver`. macOS popovers (Calendar's event-detail
+    /// popover, in particular) self-dismiss when AX attribute enumeration runs against them, so
+    /// disabling Cotabby globally or for a specific app must actually stop the walk, not just
+    /// stop generating suggestions on top of it (#476).
+    private let isCaptureSuppressedForBundle: @MainActor (String?) -> Bool
     private let snapshotResolver: FocusSnapshotResolver
 
     private var timer: Timer?
@@ -37,15 +44,34 @@ final class FocusTracker {
     // pure `FocusPollBackoff` so they can be unit-tested without a live timer.
     private var backoff = FocusPollBackoff()
 
+    // Cached element resolved via cursor hit-testing for Chromium OOPIF editors (e.g. Gmail
+    // compose) that the system-wide focused-element query cannot see. Re-validated each tick via
+    // AXFocused and dropped the instant it loses focus or the frontmost app changes, so it never
+    // masks a real focus change. Paired with `lastChromeProbeSignature` to keep the diagnostic log
+    // to one line per focus-resolution change.
+    private var chromiumHitTestCache: (element: AXUIElement, pid: pid_t)?
+    private var lastChromeProbeSignature: String?
+
+    // Last bundle identifier we logged as suppressed. Used to emit one log line per
+    // suppression transition instead of one per 50-80ms poll tick.
+    private var lastSuppressedBundleIdentifier: String?
+
+    // Wakes Chromium/Electron web-accessibility trees so their web text becomes readable. Priming
+    // is what turns a Chrome renderer from "AX-unaware" (omnibox-only) into a tree the focus
+    // queries and hit-test fallback can actually resolve.
+    private let chromiumAccessibilityEnabler = ChromiumAccessibilityEnabler()
+
     init(
         pollInterval: TimeInterval = 0.08,
         permissionProvider: @escaping @MainActor () -> Bool,
         ignoredBundleIdentifier: String?,
+        isCaptureSuppressedForBundle: @escaping @MainActor (String?) -> Bool = { _ in false },
         snapshotResolver: FocusSnapshotResolver? = nil
     ) {
         self.pollInterval = pollInterval
         self.permissionProvider = permissionProvider
         self.ignoredBundleIdentifier = ignoredBundleIdentifier
+        self.isCaptureSuppressedForBundle = isCaptureSuppressedForBundle
         // Default resolver construction must happen inside the actor-isolated initializer body.
         // Swift evaluates default parameter expressions before entering the `@MainActor` context.
         self.snapshotResolver = snapshotResolver ?? FocusSnapshotResolver()
@@ -155,7 +181,23 @@ final class FocusTracker {
             )
         }
 
-        guard let focusedElement = AXHelper.focusedElement() else {
+        // Prime the frontmost app's web-AX tree before reading focus, so a Chromium/Electron
+        // renderer is awake by the next tick. No-op for non-Chromium apps and after first success.
+        if let frontmost = NSWorkspace.shared.frontmostApplication {
+            chromiumAccessibilityEnabler.primeIfNeeded(application: frontmost)
+        }
+
+        let focusedElement: AXUIElement
+        var preresolvedApplication: NSRunningApplication?
+        if let systemFocused = AXHelper.focusedElement() {
+            focusedElement = systemFocused
+            // System focus works here, so we are not in the OOPIF fallback mode; drop any stale
+            // hit-test element so it can never shadow a real focus change.
+            chromiumHitTestCache = nil
+        } else if let fallback = resolveChromiumFocusFallback() {
+            focusedElement = fallback.element
+            preresolvedApplication = fallback.application
+        } else {
             let frontmost = NSWorkspace.shared.frontmostApplication
             return inactiveCapture(
                 applicationName: frontmost?.localizedName ?? "No active application",
@@ -168,7 +210,10 @@ final class FocusTracker {
         // `frontmostApplication`. Accessory apps with non-activating panels (Raycast, Spotlight,
         // Alfred) leave the previous app frontmost while owning the focused field, so trusting
         // frontmost there would attribute typing to the wrong app and defeat per-app disabling.
-        guard let application = AXHelper.owningApplication(of: focusedElement)
+        // For a hit-test fallback we trust the frontmost browser (`preresolvedApplication`): the
+        // element's own pid can be a renderer subprocess rather than the browser the user sees.
+        guard let application = preresolvedApplication
+            ?? AXHelper.owningApplication(of: focusedElement)
             ?? NSWorkspace.shared.frontmostApplication else {
             return inactiveCapture(
                 applicationName: "No active application",
@@ -184,6 +229,21 @@ final class FocusTracker {
                 capability: .blocked("Cotabby is focused.")
             )
         }
+
+        // Bail before any AX deep-walk when Cotabby is disabled for the focused app. Stops
+        // `FocusSnapshotResolver.resolveSnapshot` from enumerating attributes on transient popover
+        // windows (Calendar's event-detail popover dismisses itself when its AX tree is read out
+        // from underneath it — #476). The cheap `AXHelper.focusedElement()` query above is fine to
+        // run; only the candidate-elements walk hits the popover.
+        if isCaptureSuppressedForBundle(application.bundleIdentifier) {
+            noteCaptureSuppressed(for: application)
+            return inactiveCapture(
+                applicationName: application.localizedName ?? "?",
+                bundleIdentifier: application.bundleIdentifier,
+                capability: .blocked("Cotabby is disabled for this app.")
+            )
+        }
+        noteCaptureResumedIfNeeded()
 
         let resolveStart = ContinuousClock.now
         let firstPassSnapshot = snapshotResolver.resolveSnapshot(
@@ -220,6 +280,57 @@ final class FocusTracker {
         return FocusCaptureResult(snapshot: finalSnapshot, didChangeFocusedInput: true)
     }
 
+    /// Final link in the focus-resolution chain for Chromium-family apps: when both the system-wide
+    /// and app-scoped focused-element queries return nil (the OOPIF case, e.g. Gmail compose),
+    /// hit-test at the cursor and climb to the nearest editable container. Runs only for
+    /// Chromium/Electron and only after the cheaper queries fail, so the native and normal-Chrome
+    /// paths never reach here. The resolved element is cached and re-validated each tick via
+    /// AXFocused to avoid re-hit-testing on every poll while the field stays focused.
+    private func resolveChromiumFocusFallback() -> (element: AXUIElement, application: NSRunningApplication)? {
+        guard let frontmost = NSWorkspace.shared.frontmostApplication,
+            BrowserAppDetector.needsWebAccessibilityPriming(
+                bundleIdentifier: frontmost.bundleIdentifier)
+        else {
+            chromiumHitTestCache = nil
+            return nil
+        }
+        let pid = frontmost.processIdentifier
+
+        // Reuse a still-focused cached hit-test element instead of re-hit-testing every tick.
+        if let cache = chromiumHitTestCache, cache.pid == pid, AXHelper.isFocused(cache.element) {
+            logChromeFocusProbe(source: "cache", application: frontmost)
+            return (cache.element, frontmost)
+        }
+        chromiumHitTestCache = nil
+
+        // App-scoped focused element: covers some web inputs the system-wide query misses.
+        if let appFocused = AXHelper.focusedElement(forApplicationPID: pid) {
+            logChromeFocusProbe(source: "app-scoped", application: frontmost)
+            return (appFocused, frontmost)
+        }
+
+        // Cursor hit-test: the only query that crosses the OOPIF boundary.
+        if let hit = AXHelper.element(atCocoaPoint: NSEvent.mouseLocation) {
+            let editable = AXHelper.nearestEditable(from: hit)
+            chromiumHitTestCache = (editable, pid)
+            logChromeFocusProbe(source: "hit-test", application: frontmost)
+            return (editable, frontmost)
+        }
+
+        return nil
+    }
+
+    /// Emits one `[Focus] CHROME-FOCUS-PROBE` line per focus-resolution change (deduplicated by
+    /// app + source) so the diagnostic shows which query resolved focus without spamming the log.
+    private func logChromeFocusProbe(source: String, application: NSRunningApplication) {
+        guard CotabbyDebugOptions.isEnabled else { return }
+        let signature = "\(application.processIdentifier):\(source)"
+        guard signature != lastChromeProbeSignature else { return }
+        lastChromeProbeSignature = signature
+        CotabbyLogger.focus.debug(
+            "CHROME-FOCUS-PROBE resolved via \(source) for \(application.localizedName ?? "?")")
+    }
+
     /// Logs how long a single `resolveSnapshot` took on the main thread, with the caret source and
     /// cache hit/miss tally. Gated behind `-cotabby-debug`. This is the signal that distinguishes
     /// "keystrokes lag because the synchronous AX resolve is expensive" from other causes — a dump
@@ -238,6 +349,28 @@ final class FocusTracker {
         let line = "Resolve timing: app=\(application.localizedName ?? "?") "
             + "resolveMs=\(String(format: "%.1f", millis)) caret=\(source) cache=[\(stats)]"
         CotabbyLogger.focus.debug("\(line)")
+    }
+
+    /// Emits one log line per suppression transition. The gate is consulted on every poll tick, so
+    /// without dedupe this would write ~12-20 lines/second for as long as the user stays in the
+    /// disabled app.
+    private func noteCaptureSuppressed(for application: NSRunningApplication) {
+        let bundleIdentifier = application.bundleIdentifier
+        guard lastSuppressedBundleIdentifier != bundleIdentifier else {
+            return
+        }
+        lastSuppressedBundleIdentifier = bundleIdentifier
+        let name = application.localizedName ?? "?"
+        let id = bundleIdentifier ?? "no bundle id"
+        CotabbyLogger.focus.info("Focus capture suppressed for \(name) (\(id))")
+    }
+
+    private func noteCaptureResumedIfNeeded() {
+        guard lastSuppressedBundleIdentifier != nil else {
+            return
+        }
+        lastSuppressedBundleIdentifier = nil
+        CotabbyLogger.focus.info("Focus capture resumed")
     }
 
     private func inactiveCapture(
