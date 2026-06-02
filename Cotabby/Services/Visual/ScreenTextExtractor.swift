@@ -21,12 +21,15 @@ struct ExtractedScreenText: Sendable {
 
 enum ScreenTextExtractionError: LocalizedError {
     case noRecognizedText
+    case imageTooSmall
     case ocrFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .noRecognizedText:
             return "No usable visible text was recognized in the screenshot."
+        case .imageTooSmall:
+            return "Screenshot was too small for reliable text recognition."
         case let .ocrFailed(message):
             return "Screenshot OCR failed: \(message)"
         }
@@ -48,6 +51,16 @@ struct ScreenTextExtractor {
     /// Performs OCR asynchronously so the main actor is not blocked by Vision processing.
     func extractText(from image: CGImage) async throws -> ExtractedScreenText {
         let startedAt = Date()
+
+        // Vision's text recognizer can trap (EXC_BREAKPOINT) on degenerate, near-zero-area images —
+        // e.g. when a tiny floating/status window becomes frontmost and gets captured. Reject those
+        // up front instead of feeding them to VNImageRequestHandler. (#502)
+        let minimumOCRDimension = 8
+        guard image.width >= minimumOCRDimension, image.height >= minimumOCRDimension else {
+            log("ocr-skipped reason=too-small size=\(image.width)x\(image.height)")
+            throw ScreenTextExtractionError.imageTooSmall
+        }
+
         let preparedImage = downsampledImageIfNeeded(image)
         let wasDownsampled = preparedImage.width != image.width || preparedImage.height != image.height
 
@@ -58,11 +71,20 @@ struct ScreenTextExtractor {
 
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
+                // Guards against double-resume: Vision can invoke the request completion handler AND
+                // surface an error from handler.perform(), which would resume the continuation twice
+                // and trap with SIGTRAP. Only the first resume is honored. (#502)
+                let didResume = ManagedAtomicFlag()
+                func finish(_ body: () -> Void) {
+                    guard didResume.testAndSet() else { return }
+                    body()
+                }
+
                 let request = VNRecognizeTextRequest { request, error in
                     if let error {
                         let elapsedMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1000)
                         self.log("ocr-failed elapsed_ms=\(elapsedMilliseconds) reason=\(error.localizedDescription)")
-                        continuation.resume(throwing: ScreenTextExtractionError.ocrFailed(error.localizedDescription))
+                        finish { continuation.resume(throwing: ScreenTextExtractionError.ocrFailed(error.localizedDescription)) }
                         return
                     }
 
@@ -85,7 +107,7 @@ struct ScreenTextExtractor {
                     guard !cappedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                         let elapsedMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1000)
                         self.log("ocr-empty elapsed_ms=\(elapsedMilliseconds) lines=\(orderedLines.count)")
-                        continuation.resume(throwing: ScreenTextExtractionError.noRecognizedText)
+                        finish { continuation.resume(throwing: ScreenTextExtractionError.noRecognizedText) }
                         return
                     }
 
@@ -95,7 +117,7 @@ struct ScreenTextExtractor {
                             "preview=\(self.preview(cappedText))"
                     )
 
-                    continuation.resume(returning: ExtractedScreenText(text: cappedText, lineCount: orderedLines.count))
+                    finish { continuation.resume(returning: ExtractedScreenText(text: cappedText, lineCount: orderedLines.count)) }
                 }
 
                 request.recognitionLevel = .fast
@@ -108,7 +130,7 @@ struct ScreenTextExtractor {
                 } catch {
                     let elapsedMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1000)
                     self.log("ocr-failed elapsed_ms=\(elapsedMilliseconds) reason=\(error.localizedDescription)")
-                    continuation.resume(throwing: ScreenTextExtractionError.ocrFailed(error.localizedDescription))
+                    finish { continuation.resume(throwing: ScreenTextExtractionError.ocrFailed(error.localizedDescription)) }
                 }
             }
         }
@@ -162,5 +184,21 @@ struct ScreenTextExtractor {
 
         let cut = compact.index(compact.startIndex, offsetBy: 80)
         return "\(compact[..<cut])..."
+    }
+}
+
+/// Minimal thread-safe one-shot flag. Used to ensure a checked continuation is resumed exactly once
+/// even if Vision delivers both a completion-handler callback and a thrown error from perform(). (#502)
+private final class ManagedAtomicFlag {
+    private var value = false
+    private let lock = NSLock()
+
+    /// Atomically sets the flag and returns true only on the first call.
+    func testAndSet() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if value { return false }
+        value = true
+        return true
     }
 }
