@@ -13,10 +13,17 @@ enum SuggestionAvailabilityEvaluator {
         inputMonitoringGranted: Bool,
         screenRecordingGranted: Bool,
         focusSnapshot: FocusSnapshot,
+        pausedUntil: Date? = nil,
         checkCapability: Bool = true
     ) -> String? {
         guard globallyEnabled else {
             return "Cotabby is turned off."
+        }
+
+        // Menu-bar Pause / snooze (#8). A deadline in the future closes the gate; a past or nil value
+        // is a no-op so an elapsed snooze naturally re-opens without any extra bookkeeping here.
+        if let pausedUntil, pausedUntil > Date() {
+            return "Cotabby is paused until \(PauseStatusFormatter.shortTime(pausedUntil))."
         }
 
         if let bundleIdentifier = focusSnapshot.bundleIdentifier,
@@ -54,14 +61,16 @@ enum SuggestionAvailabilityEvaluator {
         disabledAppBundleIdentifiers: Set<String> = [],
         inputMonitoringGranted: Bool,
         screenRecordingGranted: Bool,
-        focusSnapshot: FocusSnapshot
+        focusSnapshot: FocusSnapshot,
+        pausedUntil: Date? = nil
     ) -> Bool {
         disabledReason(
             globallyEnabled: globallyEnabled,
             disabledAppBundleIdentifiers: disabledAppBundleIdentifiers,
             inputMonitoringGranted: inputMonitoringGranted,
             screenRecordingGranted: screenRecordingGranted,
-            focusSnapshot: focusSnapshot
+            focusSnapshot: focusSnapshot,
+            pausedUntil: pausedUntil
         ) == nil
     }
 
@@ -108,5 +117,25 @@ enum SuggestionAvailabilityEvaluator {
         }
 
         return SuggestionRequestFactory.shouldGenerateSuggestion(for: context.precedingText)
+    }
+}
+
+/// Small, shared formatter for rendering a snooze deadline (#8) in user-facing strings — both the
+/// gate's disabled reason and the menu-bar status line. Kept pure so it is trivially testable and so
+/// the two surfaces never drift in wording.
+enum PauseStatusFormatter {
+    /// A short, locale-aware clock time (e.g. "3:45 PM" or "15:45"), used inside "paused until …".
+    static func shortTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return formatter.string(from: date)
+    }
+
+    /// The full menu-bar status line, e.g. "Paused until 3:45 PM". Returns `nil` when not paused so
+    /// callers can fall back to their normal status rendering.
+    static func menuBarStatus(pausedUntil: Date?) -> String? {
+        guard let pausedUntil, pausedUntil > Date() else { return nil }
+        return "Paused until \(shortTime(pausedUntil))"
     }
 }

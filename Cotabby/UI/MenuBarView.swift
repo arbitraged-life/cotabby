@@ -52,6 +52,49 @@ struct MenuBarView: View {
         }
     }
 
+    // MARK: - Pause controls (#8)
+
+    /// Snooze controls: when paused, shows the resume affordance and a status line; otherwise offers
+    /// the three snooze durations behind a compact menu so the activation band stays tidy.
+    @ViewBuilder
+    private var pauseControlRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: suggestionSettings.isPaused ? "pause.circle.fill" : "pause.circle")
+                .font(.caption)
+                .foregroundStyle(suggestionSettings.isPaused ? .orange : .secondary)
+
+            if let status = PauseStatusFormatter.menuBarStatus(pausedUntil: suggestionSettings.pausedUntil) {
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
+
+                Button("Resume") {
+                    suggestionSettings.resume()
+                }
+                .font(.caption)
+                .buttonStyle(.borderless)
+                .foregroundStyle(.tint)
+            } else {
+                Text("Pause")
+                    .font(.caption)
+
+                Spacer(minLength: 0)
+
+                Menu("Snooze") {
+                    Button("15 minutes") { suggestionSettings.pause(for: 15 * 60) }
+                    Button("1 hour") { suggestionSettings.pause(for: 60 * 60) }
+                    Button("Until tomorrow") { suggestionSettings.pauseUntilTomorrow() }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .font(.caption)
+                .controlSize(.small)
+            }
+        }
+    }
+
     // MARK: - Header
 
     @ViewBuilder
@@ -104,6 +147,8 @@ struct MenuBarView: View {
                         .toggleStyle(.switch)
                         .controlSize(.small)
                 }
+
+                pauseControlRow
             }
 
             Divider()

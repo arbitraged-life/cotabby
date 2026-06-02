@@ -105,4 +105,16 @@ struct SuggestionSettingsSnapshot: Equatable, Sendable {
     let includeTrailingSpace: Bool
     /// When true, show completions even with text after cursor (Labs).
     let isMidLineCompletionEnabled: Bool
+    /// Wall-clock instant until which autocomplete is snoozed via the menu-bar Pause controls (#8).
+    /// `nil` (the default) means not paused; a value in the future closes the generation gate until
+    /// it elapses. Travels in the snapshot so the coordinator gate evaluates the same value the
+    /// menu bar shows, without subscribing to the settings model directly.
+    let pausedUntil: Date?
+
+    /// Convenience: `true` while `pausedUntil` is set and still in the future. Evaluated against the
+    /// current wall clock so a snapshot captured before the deadline naturally re-opens after it.
+    var isPaused: Bool {
+        guard let pausedUntil else { return false }
+        return pausedUntil > Date()
+    }
 }

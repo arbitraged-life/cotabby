@@ -100,6 +100,13 @@ final class SuggestionSettingsModel: ObservableObject {
     @Published private(set) var globalToggleKeyModifiers: ShortcutModifierMask
     @Published private(set) var globalToggleKeyLabel: String
     @Published private(set) var acceptanceGranularity: AcceptanceGranularity
+    /// Wall-clock instant until which autocomplete is snoozed. `nil` means not paused. A value in
+    /// the past is treated as not paused (and scrubbed lazily). Set via the menu-bar Pause controls
+    /// (#8). Persisted so a relaunch inside an active snooze window keeps Cotabby quiet.
+    @Published private(set) var pausedUntil: Date?
+    /// Fires when the active snooze window elapses so the gate re-opens without a relaunch. Held so a
+    /// new pause can cancel the previous timer.
+    private var pauseExpiryTask: Task<Void, Never>?
     private let userDefaults: UserDefaults
 
     private static let isGloballyEnabledDefaultsKey = "cotabbyGloballyEnabled"
@@ -155,6 +162,7 @@ final class SuggestionSettingsModel: ObservableObject {
     private static let fullAcceptanceKeyModifiersDefaultsKey = "cotabbyFullAcceptanceKeyModifiers"
     private static let fullAcceptanceKeyLabelDefaultsKey = "cotabbyFullAcceptanceKeyLabel"
     private static let acceptanceGranularityDefaultsKey = "cotabbyAcceptanceGranularity"
+    private static let pausedUntilDefaultsKey = "cotabbyPausedUntil"
 
     static let defaultAcceptanceKeyCode: CGKeyCode = 48
     static let defaultAcceptanceKeyLabel = "Tab"
@@ -374,6 +382,13 @@ final class SuggestionSettingsModel: ObservableObject {
             .string(forKey: Self.acceptanceGranularityDefaultsKey)
             .flatMap(AcceptanceGranularity.init(rawValue:))
             ?? .word
+        // A persisted snooze deadline only matters while it is still in the future. A past value is
+        // treated as "not paused" and scrubbed below so stale deadlines can't linger in defaults.
+        let resolvedPausedUntil: Date? = {
+            let stored = userDefaults.object(forKey: Self.pausedUntilDefaultsKey) as? Date
+            guard let stored, stored > Date() else { return nil }
+            return stored
+        }()
         isGloballyEnabled = resolvedGloballyEnabled
         disabledAppRules = resolvedDisabledAppRules
         showIndicator = resolvedShowIndicator
@@ -421,6 +436,7 @@ final class SuggestionSettingsModel: ObservableObject {
         globalToggleKeyModifiers = resolvedGlobalToggleKeyModifiers
         globalToggleKeyLabel = resolvedGlobalToggleKeyLabel
         acceptanceGranularity = resolvedAcceptanceGranularity
+        pausedUntil = resolvedPausedUntil
 
         userDefaults.set(resolvedGloballyEnabled, forKey: Self.isGloballyEnabledDefaultsKey)
         persistDisabledAppRules(resolvedDisabledAppRules)
@@ -466,6 +482,15 @@ final class SuggestionSettingsModel: ObservableObject {
         // The custom indicator icon feature was removed; scrub any previously-persisted PNG so
         // users who picked one in an older build get the default cat icon back automatically.
         userDefaults.removeObject(forKey: "cotabbyCustomIndicatorImageData")
+
+        // Re-persist the (possibly scrubbed) snooze deadline and arm the auto-resume timer so a
+        // relaunch inside an active pause window still re-opens the gate on its own.
+        if let resolvedPausedUntil {
+            userDefaults.set(resolvedPausedUntil, forKey: Self.pausedUntilDefaultsKey)
+            armPauseExpiry(at: resolvedPausedUntil)
+        } else {
+            userDefaults.removeObject(forKey: Self.pausedUntilDefaultsKey)
+        }
     }
 
     /// Legacy compatibility shim. Reads through to `showIndicator`.
@@ -496,7 +521,8 @@ final class SuggestionSettingsModel: ObservableObject {
             isInputStorageEnabled: isInputStorageEnabled,
             personalizationStrength: personalizationStrength,
             includeTrailingSpace: includeTrailingSpace,
-            isMidLineCompletionEnabled: isMidLineCompletionEnabled
+            isMidLineCompletionEnabled: isMidLineCompletionEnabled,
+            pausedUntil: pausedUntil
         )
     }
 
@@ -713,6 +739,79 @@ final class SuggestionSettingsModel: ObservableObject {
 
         isGloballyEnabled = enabled
         userDefaults.set(enabled, forKey: Self.isGloballyEnabledDefaultsKey)
+    }
+
+    // MARK: - Pause / snooze (#8)
+
+    /// `true` while an active snooze deadline is in the future. Reads through `pausedUntil` so a
+    /// single source of truth drives both the gate and the menu-bar status.
+    var isPaused: Bool {
+        guard let pausedUntil else { return false }
+        return pausedUntil > Date()
+    }
+
+    /// Snooze autocomplete for a fixed interval measured from now. Replaces any existing snooze and
+    /// re-arms the auto-resume timer. Used by the "Pause 15 minutes" / "Pause 1 hour" menu items.
+    func pause(for interval: TimeInterval) {
+        pause(until: Date().addingTimeInterval(interval))
+    }
+
+    /// Snooze autocomplete until "tomorrow morning" — the next 8 AM in the user's calendar. Used by
+    /// the "Pause until tomorrow" menu item so a late-night session stays quiet until the workday.
+    func pauseUntilTomorrow() {
+        let calendar = Calendar.current
+        let now = Date()
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: now) ?? now.addingTimeInterval(86_400)
+        var components = calendar.dateComponents([.year, .month, .day], from: tomorrow)
+        components.hour = 8
+        components.minute = 0
+        components.second = 0
+        let resumeAt = calendar.date(from: components) ?? now.addingTimeInterval(86_400)
+        pause(until: resumeAt)
+    }
+
+    /// Snooze autocomplete until a specific wall-clock instant. A deadline at or before now is
+    /// treated as an immediate resume so callers can't strand the gate closed.
+    func pause(until deadline: Date) {
+        guard deadline > Date() else {
+            resume()
+            return
+        }
+        pausedUntil = deadline
+        userDefaults.set(deadline, forKey: Self.pausedUntilDefaultsKey)
+        armPauseExpiry(at: deadline)
+    }
+
+    /// Clear any active snooze immediately and re-open the gate. Used by the "Resume" menu item and
+    /// by the auto-resume timer when a snooze window elapses.
+    func resume() {
+        pauseExpiryTask?.cancel()
+        pauseExpiryTask = nil
+        guard pausedUntil != nil else { return }
+        pausedUntil = nil
+        userDefaults.removeObject(forKey: Self.pausedUntilDefaultsKey)
+    }
+
+    /// Schedule a one-shot task that resumes when the snooze window elapses, so the gate re-opens
+    /// without a relaunch or a manual click. Cancels any previously-armed timer first.
+    private func armPauseExpiry(at deadline: Date) {
+        pauseExpiryTask?.cancel()
+        let delay = deadline.timeIntervalSinceNow
+        guard delay > 0 else {
+            resume()
+            return
+        }
+        pauseExpiryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self else { return }
+                // Only resume if this is still the active deadline (a newer pause may have replaced it).
+                if let current = self.pausedUntil, current <= Date() {
+                    self.resume()
+                }
+            }
+        }
     }
 
     func setApplicationDisabled(
@@ -1294,7 +1393,8 @@ extension SuggestionSettingsModel: SuggestionSettingsProviding {
                     isInputStorageEnabled: self.isInputStorageEnabled,
                     personalizationStrength: self.personalizationStrength,
                     includeTrailingSpace: self.includeTrailingSpace,
-                    isMidLineCompletionEnabled: self.isMidLineCompletionEnabled
+                    isMidLineCompletionEnabled: self.isMidLineCompletionEnabled,
+                    pausedUntil: self.pausedUntil
                 )
             }
             .removeDuplicates()
