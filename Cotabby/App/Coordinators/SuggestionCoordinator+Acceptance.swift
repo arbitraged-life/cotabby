@@ -125,20 +125,39 @@ extension SuggestionCoordinator {
 
         // An empty chunk means the accepted span was entirely a boundary space the field already
         // supplies: advance the session without synthesizing a keystroke.
-        if !insertionChunk.isEmpty, !suggestionInserter.insert(insertionChunk) {
-            let message = suggestionInserter.lastErrorMessage ?? "Suggestion insertion failed."
-            cancelPredictionWork()
-            clearSuggestion(clearDiagnostics: true)
-            hideOverlay(reason: "Overlay hidden because suggestion insertion failed.")
-            state = .idle
-            logStage(
-                "insert-failed",
-                workID: currentWorkID,
-                generation: liveContext.generation,
-                message: message,
-                normalizedOutput: insertionChunk
-            )
-            return false
+        if !insertionChunk.isEmpty {
+            // Insertion-strategy routing (task 4). The resolved field policy carries the strategy this
+            // app prefers, but the live accept path is contractually bound to the synthetic-keystroke
+            // inserter: only that inserter shares the suppression scheme that keeps our own injected
+            // keys from re-entering the CGEvent tap as user input. Richer strategies (AX value-set,
+            // pasteboard) are decision-wired and logged here so the policy is observable end-to-end,
+            // then deliberately routed through the proven synthetic path until the multi-strategy
+            // inserter adopts the same suppression contract. Do NOT hot-swap the live inserter here.
+            let resolvedStrategy = resolvedFieldPolicy.insertionStrategy
+            if resolvedStrategy != .syntheticKeystroke {
+                logStage(
+                    "insertion-strategy-routed",
+                    workID: currentWorkID,
+                    generation: liveContext.generation,
+                    message: "Policy preferred \(resolvedStrategy); routed through synthetic-keystroke "
+                        + "inserter (live suppression contract)."
+                )
+            }
+            if !suggestionInserter.insert(insertionChunk) {
+                let message = suggestionInserter.lastErrorMessage ?? "Suggestion insertion failed."
+                cancelPredictionWork()
+                clearSuggestion(clearDiagnostics: true)
+                hideOverlay(reason: "Overlay hidden because suggestion insertion failed.")
+                state = .idle
+                logStage(
+                    "insert-failed",
+                    workID: currentWorkID,
+                    generation: liveContext.generation,
+                    message: message,
+                    normalizedOutput: insertionChunk
+                )
+                return false
+            }
         }
 
         recordAcceptedWords(from: acceptedChunk)

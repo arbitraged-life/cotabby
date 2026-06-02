@@ -51,6 +51,28 @@ final class SuggestionCoordinator: ObservableObject {
     let overlayPresenter: SuggestionOverlayPresenter
     let logger: SuggestionDebugLogger
 
+    /// Composes the four per-field decision modules (`AppCompatibilityStore`, `FieldTypeClassifier`,
+    /// `AdaptiveDebounceController`, `InsertionStrategyResolver`) into one resolved policy per focus.
+    /// Pure and stateless, so it is safe to hold as a plain `let`.
+    let fieldPolicyResolver = FieldPolicyResolver()
+
+    /// The behaviour policy resolved for the currently focused field, recomputed on every focus
+    /// change. Consulted at the three pure decision points the coordinator already owns: the
+    /// generation gate, the debounce timing, and the prompt build. Defaults to the neutral policy
+    /// so the pipeline behaves exactly as before until a real field is focused.
+    var resolvedFieldPolicy: ResolvedFieldPolicy = .default
+
+    /// Drives context-aware debounce timing from the resolved field's `DebounceProfile`. Rebuilt
+    /// whenever the profile changes so per-field acceptance/deletion state does not leak across
+    /// fields with different timing strategies.
+    var adaptiveDebounce = AdaptiveDebounceController(profile: .standard)
+
+    /// The most recent user input classified into the `InputEvent` vocabulary the
+    /// `AdaptiveDebounceController` understands. Updated in `handleInputEvent` on each text mutation
+    /// and read by `schedulePrediction` to pick a context-aware debounce interval. Defaults to
+    /// `.character` so the very first keystroke uses the mid-word timing.
+    var lastInputEvent: InputEvent = .character
+
     /// Optional first-look hook the emoji picker installs to observe the keystroke stream. Called at
     /// the very top of `handleInputEvent`, before any suggestion logic. Returns `true` when an emoji
     /// capture is involved with this key, in which case the coordinator stands down so ghost text does

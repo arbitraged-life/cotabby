@@ -38,7 +38,8 @@ enum SuggestionRequestFactory {
         settings: SuggestionSettingsSnapshot,
         configuration: SuggestionConfiguration,
         clipboardContext: String? = nil,
-        visualContextSummary: String? = nil
+        visualContextSummary: String? = nil,
+        extraPromptHints: [String] = []
     ) -> SuggestionRequestBuildResult {
         let prefixText = truncatedPromptPrefix(
             from: context.precedingText,
@@ -69,6 +70,11 @@ enum SuggestionRequestFactory {
 
         // Inject personalization vocabulary as a soft preference when strength > 0.
         var effectiveRules = customRules
+        // Field-type / per-app soft hints resolved by FieldPolicyResolver. Appended as ordinary
+        // custom rules so they steer the model exactly like the user's own rules — gentle
+        // preferences, never hard structure. Empty for neutral fields, so behaviour is unchanged
+        // until a recognized field (code editor, terminal, chat, URL, search) is focused.
+        effectiveRules.append(contentsOf: extraPromptHints)
         if settings.personalizationStrength > 0 {
             let entries = InputHistoryStore.shared.recentEntries(limit: 500)
             if !entries.isEmpty {

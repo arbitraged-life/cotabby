@@ -20,16 +20,33 @@ extension SuggestionCoordinator {
             return
         }
 
+        // Per-app policy veto: password managers, secure fields, and any app the user has marked
+        // disabled in the compatibility table suppress completions entirely. This is an additional
+        // gate layered on top of the availability evaluator above — the evaluator owns global/
+        // permission/pause state; the resolved field policy owns app- and field-semantic rules.
+        guard resolvedFieldPolicy.completionsAllowed else {
+            disablePredictions(reason: "Completions disabled for this app or field by policy.")
+            return
+        }
+
+        // Context-aware debounce: the resolved field's DebounceProfile decides timing (aggressive
+        // for code editors, relaxed/terminal for shells, standard elsewhere), differentiated by the
+        // most recent input event. We never go below the user's configured debounce floor, so the
+        // policy can only *lengthen* the wait for noisy fields — it can't make Cotabby feel twitchier
+        // than the user asked for in Settings.
+        let policyDebounceMs = Int(adaptiveDebounce.debounceInterval(for: lastInputEvent) * 1000)
+        let effectiveDebounceMs = max(settingsSnapshot.debounceMilliseconds, policyDebounceMs)
+
         // Task cancellation in Swift is cooperative, so we also use an explicit work id.
         // That gives us strict "latest request wins" semantics even if an old task wakes up late.
         let workID = workController.replaceDebouncedWork(
-            delayMilliseconds: settingsSnapshot.debounceMilliseconds
+            delayMilliseconds: effectiveDebounceMs
         ) { [weak self] workID in
             await self?.generateFromCurrentFocus(workID: workID)
         }
 
         state = .debouncing
-        logStage("debouncing", workID: workID, message: "Waiting \(settingsSnapshot.debounceMilliseconds)ms before generating.")
+        logStage("debouncing", workID: workID, message: "Waiting \(effectiveDebounceMs)ms before generating.")
     }
 
     /// Refreshes focus after debounce, materializes a stable context, and starts generation.
@@ -124,7 +141,8 @@ extension SuggestionCoordinator {
             settings: settingsSnapshot,
             configuration: configuration,
             clipboardContext: clipboardContext,
-            visualContextSummary: visualContextSummary
+            visualContextSummary: visualContextSummary,
+            extraPromptHints: resolvedFieldPolicy.promptHints
         )
         latestGenerationNumber = context.generation
         latestPromptPreview = requestBuildResult.promptPreview

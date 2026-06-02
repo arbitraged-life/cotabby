@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Logging
 
@@ -23,6 +24,7 @@ extension SuggestionCoordinator {
     }
 
     func handleFocusSnapshotChange(_ snapshot: FocusSnapshot) {
+        updateResolvedFieldPolicy(for: snapshot)
         CotabbyLogger.suggestion.trace(
             "Focus snapshot changed: app=\(snapshot.applicationName) capability=\(snapshot.capability.shortLabel)"
         )
@@ -53,6 +55,48 @@ extension SuggestionCoordinator {
         } else {
             handleSupportedSnapshot(snapshot)
         }
+    }
+
+    /// Recomputes `resolvedFieldPolicy` for a newly focused field and rebuilds the adaptive debounce
+    /// controller when the field's timing profile changes. Called at the top of every focus-snapshot
+    /// change so the generation gate, debounce timing, and prompt build all read a policy that
+    /// matches the field the user is actually in.
+    ///
+    /// We rebuild `adaptiveDebounce` only when the `DebounceProfile` actually changes: the controller
+    /// carries per-field deletion-run and acceptance state we do not want to leak across fields with
+    /// the same profile, but recreating it on every identical focus event would throw away that state
+    /// needlessly mid-session.
+    func updateResolvedFieldPolicy(for snapshot: FocusSnapshot) {
+        let previousProfile = resolvedFieldPolicy.debounceProfile
+        let resolved = fieldPolicyResolver.resolve(snapshot: snapshot.context)
+        resolvedFieldPolicy = resolved
+
+        if resolved.debounceProfile != previousProfile {
+            adaptiveDebounce = AdaptiveDebounceController(profile: resolved.debounceProfile)
+            lastInputEvent = .character
+        }
+    }
+
+    /// Maps a captured keystroke into the `AdaptiveDebounceController`'s `InputEvent` vocabulary.
+    /// Pure and allocation-free — only inspects the characters and flags already on the event.
+    static func classifyInputEvent(_ event: CapturedInputEvent) -> InputEvent {
+        // A Command/Control-modified text mutation is almost always a paste (⌘V) or an editing
+        // shortcut rather than a literal character.
+        if event.flags.contains(.maskCommand) || event.flags.contains(.maskControl) {
+            return .paste
+        }
+        // Backspace / forward-delete produce empty-character text mutations.
+        if event.characters.isEmpty {
+            return .deletion
+        }
+        if event.characters == " " || event.characters == "\t" || event.characters == "\n" {
+            return .space
+        }
+        let punctuation = CharacterSet(charactersIn: ".,;:!?)]}\"'")
+        if let scalar = event.characters.unicodeScalars.last, punctuation.contains(scalar) {
+            return .punctuation
+        }
+        return .character
     }
 
     func handleSupportedSnapshot(_ snapshot: FocusSnapshot) {
@@ -183,6 +227,11 @@ extension SuggestionCoordinator {
         }
 
         if event.shouldSchedulePrediction {
+            // Classify the keystroke into the AdaptiveDebounceController's InputEvent vocabulary so
+            // schedulePrediction can pick context-aware timing (e.g. shorter waits at word
+            // boundaries, longer during deletion runs). Cheap and pure — just inspects the typed
+            // characters and flags already on the event.
+            lastInputEvent = Self.classifyInputEvent(event)
             // Same Chromium AX-publish race as the with-session paths below: the CGEvent tap runs
             // *before* the host app processes the keystroke, so a synchronous `refreshNow()` here
             // reads pre-keystroke text and feeds it into generation. The result is a suggestion

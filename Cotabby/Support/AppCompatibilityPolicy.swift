@@ -23,7 +23,7 @@ enum OverlayPreference: String, Codable, CaseIterable, Sendable {
 // MARK: - AppPolicy
 
 /// The full resolved policy that governs Cotabby's behaviour in a particular app + field context.
-struct AppPolicy: Sendable {
+struct AppPolicy: Sendable, Equatable {
     var completionsEnabled: Bool = true
     var midLineAllowed: Bool = true
     var insertionStrategy: InsertionStrategy = .syntheticKeystroke
