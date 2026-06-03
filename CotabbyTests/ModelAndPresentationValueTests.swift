@@ -40,16 +40,16 @@ final class SuggestionTextColorCodecTests: XCTestCase {
 final class SuggestionModelValueTests: XCTestCase {
     func test_wordCountPresetsExposeMatchingPromptInstructionsAndTokenBudgets() {
         XCTAssertEqual(SuggestionWordCountPreset.twoToFour.promptInstruction, "Return only the next 2 to 4 words.")
-        XCTAssertEqual(SuggestionWordCountPreset.twoToFour.suggestedPredictionTokenBudget, 6)
+        XCTAssertEqual(SuggestionWordCountPreset.twoToFour.suggestedPredictionTokenBudget, 5)
 
         XCTAssertEqual(SuggestionWordCountPreset.fourToSeven.promptInstruction, "Return only the next 4 to 7 words.")
-        XCTAssertEqual(SuggestionWordCountPreset.fourToSeven.suggestedPredictionTokenBudget, 11)
+        XCTAssertEqual(SuggestionWordCountPreset.fourToSeven.suggestedPredictionTokenBudget, 9)
 
         XCTAssertEqual(SuggestionWordCountPreset.sevenToTwelve.promptInstruction, "Return only the next 7 to 12 words.")
-        XCTAssertEqual(SuggestionWordCountPreset.sevenToTwelve.suggestedPredictionTokenBudget, 18)
+        XCTAssertEqual(SuggestionWordCountPreset.sevenToTwelve.suggestedPredictionTokenBudget, 15)
 
         XCTAssertEqual(SuggestionWordCountPreset.twelveToTwenty.promptInstruction, "Return only the next 12 to 20 words.")
-        XCTAssertEqual(SuggestionWordCountPreset.twelveToTwenty.suggestedPredictionTokenBudget, 30)
+        XCTAssertEqual(SuggestionWordCountPreset.twelveToTwenty.suggestedPredictionTokenBudget, 25)
     }
 
     func test_activeSuggestionSession_clampsConsumedCountAndSlicesByCharacters() {
@@ -147,14 +147,27 @@ final class RuntimeAndInputModelValueTests: XCTestCase {
 
     func test_runtimeModelCatalogMapsKnownNamesAndLeavesCustomNamesAlone() {
         XCTAssertEqual(
-            RuntimeModelCatalog.displayName(for: "Qwen3-0.6B-Q4_K_M.gguf"),
-            "tabby-1-mini"
+            RuntimeModelCatalog.displayName(for: "Qwen3.5-0.8B-Base.i1-Q6_K.gguf"),
+            "tabby-2-nano"
         )
         XCTAssertEqual(
-            RuntimeModelCatalog.displayName(for: "gemma-4-E2B-it-Q4_K_M.gguf"),
-            "tabby-1-base"
+            RuntimeModelCatalog.displayName(for: "Qwen3.5-2B-Base.i1-Q4_K_M.gguf"),
+            "tabby-2-mini"
         )
-        // Retired models fall back to their raw filename like any unknown local GGUF.
+        XCTAssertEqual(
+            RuntimeModelCatalog.displayName(for: "gemma-4-E2B.i1-Q6_K.gguf"),
+            "tabby-2-base"
+        )
+        XCTAssertEqual(
+            RuntimeModelCatalog.displayName(for: "gemma-4-E4B.i1-Q4_K_M.gguf"),
+            "tabby-2-pro"
+        )
+        // Retired models fall back to their raw filename like any unknown local GGUF. The 4B Qwen
+        // base was dropped when the catalog moved to the nano/mini/base/pro four-tier lineup.
+        XCTAssertEqual(
+            RuntimeModelCatalog.displayName(for: "Qwen3.5-4B-Base.i1-Q4_K_M.gguf"),
+            "Qwen3.5-4B-Base.i1-Q4_K_M.gguf"
+        )
         XCTAssertEqual(
             RuntimeModelCatalog.displayName(for: "Qwen3.5-0.8B-Q4_K_M.gguf"),
             "Qwen3.5-0.8B-Q4_K_M.gguf"

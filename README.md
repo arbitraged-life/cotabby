@@ -45,32 +45,10 @@ Everything runs on-device. No hosted API, no cloud round-trip.
   <a href="https://www.youtube.com/watch?v=p3TIgxQFQGE"><strong>Watch on YouTube →</strong></a>
 </p>
 
-<table align="center" width="100%">
-  <tr>
-    <td align="center" valign="top" width="50%">
-      <img src=".github/assets/readme/demo-email.png" alt="Cotabby autocomplete in Email" width="100%" />
-      <br />
-      <sub><b>Email</b></sub>
-    </td>
-    <td align="center" valign="top" width="50%">
-      <img src="https://github.com/user-attachments/assets/05c04d09-e658-478b-b10e-25c6a0d1b4ee" alt="Cotabby autocomplete in Slack" width="100%" />
-      <br />
-      <sub><b>Slack</b></sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" valign="top" width="50%">
-      <img src="https://github.com/user-attachments/assets/7d16957f-e2bd-487a-9910-757286b445ea" alt="Cotabby autocomplete in Notes" width="100%" />
-      <br />
-      <sub><b>Notes</b></sub>
-    </td>
-    <td align="center" valign="top" width="50%">
-      <img src="https://github.com/user-attachments/assets/407ccd42-b0fb-414d-9bd2-9ce05119777e" alt="Cotabby autocomplete in iMessage" width="100%" />
-      <br />
-      <sub><b>iMessage</b></sub>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="gifs/slack.gif" alt="Cotabby emoji autocomplete demo" width="700" height="240" style="margin-right:12px;" />
+  <img src="gifs/imessage.gif" alt="Cotabby autocomplete demo" width="700" height="240" />
+</p>
 
 ## Features
 
@@ -85,14 +63,16 @@ Everything runs on-device. No hosted API, no cloud round-trip.
 
 **Apple Intelligence**: uses Apple's on-device `FoundationModels` runtime on macOS 26 or later, no download required.
 
-**Open Source**: runs local GGUF models in-process through llama.cpp via `CotabbyInference`. Cotabby ships with four built-in downloadable models:
+**Open Source**: runs local GGUF *base* models in-process through llama.cpp via `CotabbyInference`. Rather than instructing an instruction-tuned model, Cotabby treats the model as a pure text continuer and conditions it on your persona, style, language, and on-screen context. Cotabby ships with four built-in downloadable models:
 
-| Model          | File                              | Size    | Source                                                                                                  |
-| -------------- | --------------------------------- | ------- | ------------------------------------------------------------------------------------------------------- |
-| `tabby-1-nano` | `SmolLM2-135M-Instruct-q8_0.gguf` | ~0.1 GB | [Mungert/SmolLM2-135M-Instruct-GGUF](https://huggingface.co/Mungert/SmolLM2-135M-Instruct-GGUF)         |
-| `tabby-1-mini` | `Qwen3-0.6B-Q4_K_M.gguf`          | ~0.4 GB | [unsloth/Qwen3-0.6B-GGUF](https://huggingface.co/unsloth/Qwen3-0.6B-GGUF)                               |
-| `tabby-1-base` | `gemma-4-E2B-it-Q4_K_M.gguf`      | ~3.1 GB | [unsloth/gemma-4-E2B-it-GGUF](https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF)                       |
-| `tabby-1-pro`  | `gemma-4-E4B-it-Q4_K_M.gguf`      | ~5.0 GB | [unsloth/gemma-4-E4B-it-GGUF](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF)                       |
+| Model          | File                             | Size    | Source                                                                                                  |
+| -------------- | -------------------------------- | ------- | ------------------------------------------------------------------------------------------------------- |
+| `tabby-2-nano` | `Qwen3.5-0.8B-Base.i1-Q6_K.gguf` | ~0.8 GB | [mradermacher/Qwen3.5-0.8B-Base-i1-GGUF](https://huggingface.co/mradermacher/Qwen3.5-0.8B-Base-i1-GGUF) |
+| `tabby-2-mini` | `Qwen3.5-2B-Base.i1-Q4_K_M.gguf` | ~1.4 GB | [mradermacher/Qwen3.5-2B-Base-i1-GGUF](https://huggingface.co/mradermacher/Qwen3.5-2B-Base-i1-GGUF)     |
+| `tabby-2-base` | `gemma-4-E2B.i1-Q6_K.gguf`       | ~4.5 GB | [mradermacher/gemma-4-E2B-i1-GGUF](https://huggingface.co/mradermacher/gemma-4-E2B-i1-GGUF)             |
+| `tabby-2-pro`  | `gemma-4-E4B.i1-Q4_K_M.gguf`     | ~5.0 GB | [mradermacher/gemma-4-E4B-i1-GGUF](https://huggingface.co/mradermacher/gemma-4-E4B-i1-GGUF)             |
+
+`tabby-2-base` (Gemma E2B) is the default and the recommended onboarding tier; `tabby-2-nano` is the lightweight option for low-memory Macs, `tabby-2-mini` is a smaller alternative, and `tabby-2-pro` is the largest. Apple Intelligence remains instruction-tuned and is unaffected by the base-model path.
 
 ### Bring your own model
 

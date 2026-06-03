@@ -11,6 +11,7 @@ struct GeneralPaneView: View {
     @ObservedObject var suggestionSettings: SuggestionSettingsModel
     @ObservedObject var launchAtLoginService: LaunchAtLoginService
     let onShowWelcome: () -> Void
+    let clearEmojiHistory: () -> Void
 
     @State private var cotypistImportStatus: String?
     @State private var importStatusIsError = false
@@ -238,6 +239,17 @@ struct GeneralPaneView: View {
                             description: "Choose person, man, or woman variants when an emoji offers them."
                         )
                     }
+
+                    LabeledContent {
+                        Button("Clear History") {
+                            clearEmojiHistory()
+                        }
+                    } label: {
+                        SettingsRowLabel(
+                            title: "Emoji History",
+                            description: "Forget recently and frequently used emoji so the picker ranks from scratch."
+                        )
+                    }
                 }
             }
 
@@ -372,13 +384,6 @@ struct GeneralPaneView: View {
         Binding(
             get: { suggestionSettings.isEmojiPickerEnabled },
             set: { suggestionSettings.setEmojiPickerEnabled($0) }
-        )
-    }
-
-    private var emojiSkinToneBinding: Binding<EmojiSkinTone> {
-        Binding(
-            get: { suggestionSettings.preferredEmojiSkinTone },
-            set: { suggestionSettings.setPreferredEmojiSkinTone($0) }
         )
     }
 

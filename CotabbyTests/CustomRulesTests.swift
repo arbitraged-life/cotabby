@@ -74,6 +74,7 @@ final class CustomRulesTests: XCTestCase {
         XCTAssertFalse(prompt.contains("Your style preferences:"))
     }
 
+
     // MARK: - foundation model rendering
 
     func test_foundationModelInstructions_includeRules() {

@@ -29,6 +29,7 @@ final class CotabbyAppEnvironment {
     /// same answer the autocomplete pipeline would, not a stand-in.
     let suggestionEngine: any SuggestionGenerating
     let emojiPickerController: EmojiPickerController
+    let emojiUsageStore: EmojiUsageStore
     let welcomeCoordinator: WelcomeCoordinator
     let huggingFaceSearchService: HuggingFaceSearchService
     let performanceMetricsStore: PerformanceMetricsStore
@@ -115,8 +116,7 @@ final class CotabbyAppEnvironment {
         let activationIndicatorController = ActivationIndicatorController()
         let clipboardContextProvider = ClipboardContextProvider()
         let clipboardRelevanceFilter = ClipboardRelevanceFilter()
-        let summarizer = LlamaVisualContextSummarizer(runtimeManager: runtimeManager)
-        let screenshotContextGenerator = ScreenshotContextGenerator(summarizer: summarizer)
+        let screenshotContextGenerator = ScreenshotContextGenerator()
         let visualContextCoordinator = VisualContextCoordinator(
             screenshotContextGenerator: screenshotContextGenerator,
             screenRecordingPermissionProvider: { permissionManager.screenRecordingGranted }
@@ -151,6 +151,10 @@ final class CotabbyAppEnvironment {
             }
         )
 
+        // Per-user emoji recents/frequency. Built before the settings coordinator so the
+        // "Clear History" control can reach it, and before the picker which reads and writes it.
+        let emojiUsageStore = EmojiUsageStore()
+
         let settingsCoordinator = SettingsCoordinator(
             appUpdateManager: appUpdateManager,
             launchAtLoginService: launchAtLoginService,
@@ -165,7 +169,8 @@ final class CotabbyAppEnvironment {
             performanceMetricsStore: performanceMetricsStore,
             onShowWelcome: { [weak welcomeCoordinator] in
                 welcomeCoordinator?.showWelcome()
-            }
+            },
+            clearEmojiHistory: { emojiUsageStore.clear() }
         )
 
         let interactionState = SuggestionInteractionState()
@@ -196,7 +201,9 @@ final class CotabbyAppEnvironment {
             inserter: suggestionInserter,
             isEnabled: { suggestionSettings.isEmojiPickerEnabled },
             emojiPreferences: { suggestionSettings.emojiVariantPreferences },
-            acceptKeyLabel: { suggestionSettings.emojiPickerAcceptKeyLabel }
+            acceptKeyLabel: { suggestionSettings.emojiPickerAcceptKeyLabel },
+            emojiUsage: { emojiUsageStore.snapshot() },
+            recordEmojiUsage: { emojiUsageStore.record(alias: $0) }
         )
         // Give the picker first look at every keystroke the coordinator receives, so it can detect the
         // `:` trigger and drive its state machine without changing who owns `inputMonitor.onEvent`.
@@ -218,6 +225,7 @@ final class CotabbyAppEnvironment {
         self.suggestionCoordinator = suggestionCoordinator
         self.suggestionEngine = suggestionEngine
         self.emojiPickerController = emojiPickerController
+        self.emojiUsageStore = emojiUsageStore
         self.welcomeCoordinator = welcomeCoordinator
         self.huggingFaceSearchService = huggingFaceSearchService
         self.performanceMetricsStore = performanceMetricsStore

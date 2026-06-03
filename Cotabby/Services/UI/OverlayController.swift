@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Logging
 import SwiftUI
 
 /// File overview:
@@ -32,11 +33,6 @@ final class OverlayController: SuggestionOverlayControlling {
     /// Optional injection seam for tests. When set, `currentRenderModePolicy` returns this directly
     /// instead of building one from live settings. Production code leaves this nil.
     private let renderModePolicyOverride: CompletionRenderModePolicy?
-
-    /// Bundle identifier of the currently focused host app, supplied by the coordinator each time
-    /// a suggestion is presented. The policy uses this to look up per-app overrides. Nil in tests
-    /// or when the focus pipeline could not identify the host.
-    private var currentBundleIdentifier: String?
 
     /// Built from the live `mirrorPreference` setting at call time rather than cached. The struct
     /// is tiny (one enum + an empty dict in Phase 2) so per-show allocation cost is negligible,
@@ -80,13 +76,6 @@ final class OverlayController: SuggestionOverlayControlling {
         self.renderModePolicyOverride = renderModePolicyOverride
     }
 
-    /// Coordinator hook that updates the bundle identifier used by per-app overrides. Phase 1
-    /// callers do not need this (policy is `.auto` with no overrides); Phase 2 will wire it through
-    /// the presenter so per-app settings take effect immediately when the focused app changes.
-    func setCurrentBundleIdentifier(_ bundleIdentifier: String?) {
-        currentBundleIdentifier = bundleIdentifier
-    }
-
     private lazy var panel: OverlayPanel = {
         let panel = OverlayPanel(
             contentRect: CGRect(x: 0, y: 0, width: 10, height: 10),
@@ -119,9 +108,11 @@ final class OverlayController: SuggestionOverlayControlling {
             return
         }
 
+        // Per-app render-mode overrides are not wired yet, so the policy always resolves without a
+        // host bundle identifier; thread the focused app's id here when per-app overrides ship.
         let mode = currentRenderModePolicy.mode(
             for: geometry,
-            bundleIdentifier: currentBundleIdentifier
+            bundleIdentifier: nil
         )
 
         switch mode {
@@ -202,6 +193,13 @@ final class OverlayController: SuggestionOverlayControlling {
 
         let frame = layout.panelFrame(for: contentSize, caretRect: geometry.caretRect)
 
+        // Last-resort guard: AppKit raises on a non-finite frame. The AX ingest boundary already
+        // rejects NaN/Inf rects, so reaching here means the layout math produced one; skip the show
+        // rather than crash on the hottest path.
+        guard AXHelper.rectHasFiniteComponents(frame) else {
+            CotabbyLogger.suggestion.warning("Skipped inline overlay: computed a non-finite frame")
+            return
+        }
         panel.setFrame(frame.integral, display: true)
         panel.orderFrontRegardless()
     }
@@ -250,7 +248,12 @@ final class OverlayController: SuggestionOverlayControlling {
             panel.contentView = contentView
         }
 
-        panel.setFrame(layout.panelFrame, display: true)
+        let panelFrame = layout.panelFrame
+        guard AXHelper.rectHasFiniteComponents(panelFrame) else {
+            CotabbyLogger.suggestion.warning("Skipped mirror overlay: computed a non-finite frame")
+            return
+        }
+        panel.setFrame(panelFrame, display: true)
         panel.orderFrontRegardless()
     }
 

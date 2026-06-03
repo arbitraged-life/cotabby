@@ -572,6 +572,7 @@ final class SuggestionCaretPredictionTests: XCTestCase {
 private final class FakeOverlayController: SuggestionOverlayControlling {
     var state: OverlayState
     var onStateChange: ((OverlayState) -> Void)?
+    var alternativeIndicator: String?
 
     private(set) var showCallCount = 0
     private(set) var lastShownText: String?

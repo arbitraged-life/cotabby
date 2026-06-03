@@ -8,15 +8,31 @@ import Logging
 /// This is the bridge between raw image capture and the existing text-only local LLM runtime.
 ///
 /// We deliberately downsample very large screenshots before OCR. The goal is not archival fidelity;
-/// it is fast, good-enough semantic extraction for autocomplete context.
-///
-/// DEPRECATED:
-/// The current autocomplete request path no longer injects OCR-derived context.
-/// Keep this extractor only for legacy experiments until the context rewrite lands.
+/// it is bounded semantic extraction for autocomplete context. This pass favors useful text
+/// recovery over minimum latency because the output is captured once per focused field.
 
 struct ExtractedScreenText: Sendable {
     let text: String
     let lineCount: Int
+    /// Per-line OCR text paired with Vision's recognition confidence, in reading order. Carries the
+    /// confidence that the joined `text` discards, so `OCRTextHygiene.dropLowConfidence` can filter on
+    /// real values instead of a synthesized constant. Defaults to empty for callers (and tests) that
+    /// only supply joined text.
+    let lines: [OCRTextHygiene.OCRLine]
+
+    init(text: String, lineCount: Int, lines: [OCRTextHygiene.OCRLine] = []) {
+        self.text = text
+        self.lineCount = lineCount
+        self.lines = lines
+    }
+}
+
+/// Test seam for screenshot OCR.
+///
+/// `ScreenshotContextGenerator` owns orchestration, while this protocol lets tests inject
+/// deterministic OCR without depending on Vision, Screen Recording permission, or real pixels.
+protocol ScreenTextExtracting {
+    func extractText(from image: CGImage) async throws -> ExtractedScreenText
 }
 
 enum ScreenTextExtractionError: LocalizedError {
@@ -36,7 +52,7 @@ enum ScreenTextExtractionError: LocalizedError {
     }
 }
 
-struct ScreenTextExtractor {
+struct ScreenTextExtractor: ScreenTextExtracting {
     let maxImageDimension: Int
     let maxRecognizedCharacters: Int
 
@@ -89,7 +105,10 @@ struct ScreenTextExtractor {
                     }
 
                     let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
-                    let orderedLines = observations
+                    // Keep each line's confidence (from its top candidate) so the hygiene pass can drop
+                    // the recognizer's weakest guesses; the joined `text` below is for logging and the
+                    // window-title fallback only.
+                    let recognizedLines: [OCRTextHygiene.OCRLine] = observations
                         .sorted {
                             if Swift.abs($0.boundingBox.minY - $1.boundingBox.minY) > 0.02 {
                                 return $0.boundingBox.minY > $1.boundingBox.minY
@@ -97,32 +116,45 @@ struct ScreenTextExtractor {
 
                             return $0.boundingBox.minX < $1.boundingBox.minX
                         }
-                        .compactMap { $0.topCandidates(1).first?.string }
-                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                        .filter { !$0.isEmpty }
+                        .compactMap { observation -> OCRTextHygiene.OCRLine? in
+                            guard let candidate = observation.topCandidates(1).first else { return nil }
+                            let trimmed = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !trimmed.isEmpty else { return nil }
+                            return OCRTextHygiene.OCRLine(text: trimmed, confidence: candidate.confidence)
+                        }
 
-                    let joinedText = orderedLines.joined(separator: "\n")
+                    let joinedText = recognizedLines.map(\.text).joined(separator: "\n")
                     let cappedText = String(joinedText.prefix(maxRecognizedCharacters))
 
                     guard !cappedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                         let elapsedMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1000)
-                        self.log("ocr-empty elapsed_ms=\(elapsedMilliseconds) lines=\(orderedLines.count)")
+                        self.log("ocr-empty elapsed_ms=\(elapsedMilliseconds) lines=\(recognizedLines.count)")
                         finish { continuation.resume(throwing: ScreenTextExtractionError.noRecognizedText) }
                         return
                     }
 
                     let elapsedMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1000)
                     self.log(
-                        "ocr-success elapsed_ms=\(elapsedMilliseconds) lines=\(orderedLines.count) chars=\(cappedText.count) " +
+                        "ocr-success elapsed_ms=\(elapsedMilliseconds) lines=\(recognizedLines.count) chars=\(cappedText.count) " +
                             "preview=\(self.preview(cappedText))"
                     )
 
-                    finish { continuation.resume(returning: ExtractedScreenText(text: cappedText, lineCount: orderedLines.count)) }
+                    finish {
+                        continuation.resume(
+                            returning: ExtractedScreenText(
+                                text: cappedText,
+                                lineCount: recognizedLines.count,
+                                lines: recognizedLines
+                            )
+                        )
+                    }
                 }
 
-                request.recognitionLevel = .fast
+                // Accurate OCR is slower, but visual context is only captured once per focused
+                // field and the result can materially improve autocomplete relevance.
+                request.recognitionLevel = .accurate
                 request.usesLanguageCorrection = false
-                request.minimumTextHeight = 0.012
+                request.minimumTextHeight = 0.008
 
                 do {
                     let handler = VNImageRequestHandler(cgImage: preparedImage, options: [:])

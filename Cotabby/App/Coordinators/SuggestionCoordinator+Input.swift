@@ -15,6 +15,7 @@ extension SuggestionCoordinator {
         if SuggestionAvailabilityEvaluator.shouldSchedulePrediction(
             globallyEnabled: settingsSnapshot.isGloballyEnabled,
             disabledAppBundleIdentifiers: settingsSnapshot.disabledAppBundleIdentifiers,
+            disabledDomains: PerDomainDisableSettings.disabledDomains(),
             inputMonitoringGranted: permissionManager.inputMonitoringGranted,
             screenRecordingGranted: permissionManager.screenRecordingGranted,
             focusSnapshot: focusModel.snapshot
@@ -25,8 +26,24 @@ extension SuggestionCoordinator {
 
     func handleFocusSnapshotChange(_ snapshot: FocusSnapshot) {
         updateResolvedFieldPolicy(for: snapshot)
+
+        switch capabilityFlickerGate.evaluate(snapshot) {
+        case .apply:
+            break
+        case let .suppress(pendingBlockedReadCount: count):
+            // Single-poll AX flicker on the same element (see FocusCapabilityFlickerGate). Drop the
+            // event so the overlay does not bounce; log it so the suppression is observable.
+            let suppressedDetail = snapshot.capability.summary
+            CotabbyLogger.suggestion.trace(
+                // swiftlint:disable:next line_length
+                "Focus snapshot flicker suppressed: app=\(snapshot.applicationName) capability=\(snapshot.capability.shortLabel) detail=\(suppressedDetail) pendingBlockedReads=\(count)"
+            )
+            return
+        }
+
+        let changedDetail = snapshot.capability.summary
         CotabbyLogger.suggestion.trace(
-            "Focus snapshot changed: app=\(snapshot.applicationName) capability=\(snapshot.capability.shortLabel)"
+            "Focus snapshot changed: app=\(snapshot.applicationName) capability=\(snapshot.capability.shortLabel) detail=\(changedDetail)"
         )
         // Start capturing visual context for a newly focused input even when predictions are
         // temporarily disabled by transient field states (e.g., "text is selected" or "secure
@@ -36,6 +53,7 @@ extension SuggestionCoordinator {
            SuggestionAvailabilityEvaluator.shouldCaptureVisualContext(
                globallyEnabled: settingsSnapshot.isGloballyEnabled,
                disabledAppBundleIdentifiers: settingsSnapshot.disabledAppBundleIdentifiers,
+               disabledDomains: PerDomainDisableSettings.disabledDomains(),
                inputMonitoringGranted: permissionManager.inputMonitoringGranted,
                screenRecordingGranted: permissionManager.screenRecordingGranted,
                focusSnapshot: snapshot,
@@ -47,6 +65,7 @@ extension SuggestionCoordinator {
         if let disabledReason = SuggestionAvailabilityEvaluator.disabledReason(
             globallyEnabled: settingsSnapshot.isGloballyEnabled,
             disabledAppBundleIdentifiers: settingsSnapshot.disabledAppBundleIdentifiers,
+            disabledDomains: PerDomainDisableSettings.disabledDomains(),
             inputMonitoringGranted: permissionManager.inputMonitoringGranted,
             screenRecordingGranted: permissionManager.screenRecordingGranted,
             focusSnapshot: snapshot
@@ -111,6 +130,7 @@ extension SuggestionCoordinator {
         if SuggestionAvailabilityEvaluator.shouldCaptureVisualContext(
             globallyEnabled: settingsSnapshot.isGloballyEnabled,
             disabledAppBundleIdentifiers: settingsSnapshot.disabledAppBundleIdentifiers,
+            disabledDomains: PerDomainDisableSettings.disabledDomains(),
             inputMonitoringGranted: permissionManager.inputMonitoringGranted,
             screenRecordingGranted: permissionManager.screenRecordingGranted,
             focusSnapshot: snapshot,
@@ -189,6 +209,7 @@ extension SuggestionCoordinator {
         if let disabledReason = SuggestionAvailabilityEvaluator.disabledReason(
             globallyEnabled: settingsSnapshot.isGloballyEnabled,
             disabledAppBundleIdentifiers: settingsSnapshot.disabledAppBundleIdentifiers,
+            disabledDomains: PerDomainDisableSettings.disabledDomains(),
             inputMonitoringGranted: permissionManager.inputMonitoringGranted,
             screenRecordingGranted: permissionManager.screenRecordingGranted,
             focusSnapshot: focusModel.snapshot

@@ -107,6 +107,7 @@ final class LanguageSupportTests: XCTestCase {
         XCTAssertFalse(prompt.contains("usually writes in"))
     }
 
+
     func test_foundationModelInstructions_includeLanguageHint() {
         let request = CotabbyTestFixtures.suggestionRequest(
             languageInstruction: LanguageCatalog.promptInstruction(for: ["Japanese"])

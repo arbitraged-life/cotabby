@@ -200,6 +200,12 @@ struct FocusSnapshotResolver {
         let nsValue = contextWindow.text as NSString
         let safeSelectionLocation = min(contextWindow.selection.location, nsValue.length)
         let trailingStart = min(contextWindow.selection.location + contextWindow.selection.length, nsValue.length)
+        // Per-site disable: read the page URL only when the feature is enabled, so the default
+        // focus-capture path performs no extra Accessibility round-trips. The read is fail-safe (nil on
+        // any miss), so the worst case is the per-site gate staying inert.
+        let focusedURLString = PerDomainDisableSettings.isEnabled()
+            ? AXHelper.webURL(near: focusedElement)
+            : nil
         let context = FocusedInputSnapshot(
             applicationName: applicationName,
             bundleIdentifier: bundleIdentifier,
@@ -216,7 +222,8 @@ struct FocusSnapshotResolver {
             trailingText: nsValue.substring(from: trailingStart),
             selection: contextWindow.selection,
             isSecure: resolvedCandidate.isSecure,
-            focusChangeSequence: focusChangeSequence
+            focusChangeSequence: focusChangeSequence,
+            focusedURLString: focusedURLString
         )
 
         if resolvedCandidate.isSecure {
@@ -814,18 +821,16 @@ struct FocusSnapshotResolver {
 
     /// Detects secure inputs so Cotabby can intentionally refuse to operate in sensitive fields.
     private func isSecureElement(element: AXUIElement, role: String, subrole: String?) -> Bool {
-        let secureMarkers = [
-            role.lowercased(),
-            subrole?.lowercased() ?? "",
-            AXHelper.stringValue(for: kAXDescriptionAttribute as CFString, on: element)?
-                .lowercased() ?? "",
-            AXHelper.stringValue(for: kAXTitleAttribute as CFString, on: element)?.lowercased()
-                ?? ""
-        ]
-
-        return secureMarkers.contains { marker in
-            marker.contains("secure") || marker.contains("password")
-        }
+        // Read the role description too: a native NSSecureTextField announces its sensitivity there
+        // ("secure text field") rather than through AXDescription, so the previous role/desc/title-only
+        // check missed it. SecureFieldDetector owns the (pure, testable) marker policy.
+        SecureFieldDetector.isSecure(
+            role: role,
+            subrole: subrole,
+            roleDescription: AXHelper.stringValue(for: kAXRoleDescriptionAttribute as CFString, on: element),
+            title: AXHelper.stringValue(for: kAXTitleAttribute as CFString, on: element),
+            descriptionLabel: AXHelper.stringValue(for: kAXDescriptionAttribute as CFString, on: element)
+        )
     }
 
     // MARK: - Debug AX tree dump

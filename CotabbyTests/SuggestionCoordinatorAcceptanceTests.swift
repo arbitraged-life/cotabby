@@ -356,6 +356,7 @@ private final class StubSuggestionInputMonitor: SuggestionInputMonitoring {
 private final class StubSuggestionOverlayController: SuggestionOverlayControlling {
     var state: OverlayState
     var onStateChange: ((OverlayState) -> Void)?
+    var alternativeIndicator: String?
 
     init(state: OverlayState) {
         self.state = state
