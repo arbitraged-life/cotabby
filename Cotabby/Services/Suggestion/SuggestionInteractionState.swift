@@ -37,10 +37,6 @@ final class SuggestionInteractionState {
         contextBuffer.materialize(from: snapshot)
     }
 
-    func clearContext() {
-        contextBuffer.clear()
-    }
-
     func clearSuggestion() {
         activeSession = nil
         pendingInsertionConsumedCount = nil

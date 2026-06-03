@@ -46,9 +46,9 @@ final class OnboardingTemplateRecommenderTests: XCTestCase {
 
     func testOpenSourceTiersMapToTheirLocalModels() {
         let expected: [OnboardingTemplate: String] = [
-            .quick: "SmolLM2-135M-Instruct-q8_0.gguf",
-            .everyday: "gemma-4-E2B-it-Q4_K_M.gguf",
-            .powerful: "gemma-4-E4B-it-Q4_K_M.gguf"
+            .quick: "Qwen3.5-0.8B-Base.i1-Q6_K.gguf",
+            .everyday: "gemma-4-E2B.i1-Q6_K.gguf",
+            .powerful: "gemma-4-E4B.i1-Q4_K_M.gguf"
         ]
         for (template, filename) in expected {
             let plan = OnboardingTemplateRecommender.resolvePlan(for: template, engine: .llamaOpenSource)
@@ -60,9 +60,11 @@ final class OnboardingTemplateRecommenderTests: XCTestCase {
     // MARK: - availability gating (Open Source engine)
 
     func testPowerfulDisabledOnLowMemoryMacOpenSource() {
+        // Sub-8 GB Macs (effectively pre-Apple-Silicon) cannot comfortably hold the model, so Powerful
+        // is excluded there.
         let availability = OnboardingTemplateRecommender.availability(
             for: .powerful,
-            hardware: hardware(gigabytes: 8),
+            hardware: hardware(gigabytes: 6),
             engine: .llamaOpenSource
         )
 
@@ -71,9 +73,12 @@ final class OnboardingTemplateRecommenderTests: XCTestCase {
     }
 
     func testPowerfulWarnsBetweenDisableFloorAndComfortCeiling() {
+        // 8 GB is the disable floor: allowed, not excluded, but still flagged below the 16 GB comfort
+        // ceiling. This pins that a stock 8 GB Mac can run the Powerful base model (the smaller
+        // base-model tiers no longer need the old 10 GB floor).
         let availability = OnboardingTemplateRecommender.availability(
             for: .powerful,
-            hardware: hardware(gigabytes: 12),
+            hardware: hardware(gigabytes: 8),
             engine: .llamaOpenSource
         )
 

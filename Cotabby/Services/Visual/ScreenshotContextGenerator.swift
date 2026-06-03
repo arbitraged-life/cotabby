@@ -26,15 +26,17 @@ enum ScreenshotContextGenerationError: LocalizedError {
 
 @MainActor
 final class ScreenshotContextGenerator {
-    private let screenshotService: WindowScreenshotService
-    private let textExtractor: ScreenTextExtractor
-    private let summarizer: VisualContextSummarizing?
+    private enum ContextSource: String {
+        case ocrFallback = "ocr_fallback"
+    }
+
+    private let screenshotService: any WindowScreenshotCapturing
+    private let textExtractor: any ScreenTextExtracting
     private let configuration: VisualContextConfiguration
 
     init(
-        screenshotService: WindowScreenshotService? = nil,
-        textExtractor: ScreenTextExtractor? = nil,
-        summarizer: VisualContextSummarizing? = nil,
+        screenshotService: (any WindowScreenshotCapturing)? = nil,
+        textExtractor: (any ScreenTextExtracting)? = nil,
         configuration: VisualContextConfiguration? = nil
     ) {
         let actualConfig = configuration ?? .default
@@ -45,7 +47,6 @@ final class ScreenshotContextGenerator {
                 maxImageDimension: actualConfig.maxImageDimension,
                 maxRecognizedCharacters: actualConfig.maxRecognizedCharacters
             )
-        self.summarizer = summarizer
         self.configuration = actualConfig
     }
 
@@ -59,72 +60,66 @@ final class ScreenshotContextGenerator {
 
         await onStatusChange?(.extractingText)
 
-        let extractedText: String
+        let extracted: ExtractedScreenText
         do {
-            extractedText = try await textExtractor.extractText(from: screenshot.image).text
+            extracted = try await textExtractor.extractText(from: screenshot.image)
         } catch ScreenTextExtractionError.noRecognizedText {
-            guard let windowTitle = screenshot.windowTitle,
-                hasMeaningfulSignal(windowTitle)
+            guard let windowTitle = screenshot.windowTitle else {
+                throw ScreenshotContextGenerationError.unavailable(
+                    "The screenshot did not contain enough visible text to build prompt context."
+                )
+            }
+
+            let normalizedTitle = normalizeRecognizedText(windowTitle)
+            guard hasMeaningfulSignal(normalizedTitle)
             else {
                 throw ScreenshotContextGenerationError.unavailable(
                     "The screenshot did not contain enough visible text to build prompt context."
                 )
             }
 
-            return VisualContextExcerpt(
-                text: boundedSummaryText(normalizeRecognizedText(windowTitle))
+            let finalTitleContext = boundedSummaryText(normalizedTitle)
+            CotabbyLogger.app.debug(
+                "Visual context ready source=\(ContextSource.ocrFallback.rawValue) chars=\(finalTitleContext.count)"
             )
+            return VisualContextExcerpt(text: finalTitleContext)
         } catch let error as ScreenTextExtractionError {
             throw ScreenshotContextGenerationError.unavailable(error.localizedDescription)
         } catch {
             throw ScreenshotContextGenerationError.failed(error.localizedDescription)
         }
 
-        let normalizedText = normalizeRecognizedText(extractedText)
+        // Filter OCR corruption (garbled / symbol-noise / digit-substituted lines) and strip any
+        // line that merely echoes the user's own field text, then sanitize for prompt-injection
+        // safety. No model summarization: a base model conditions fine on cleaned raw context, and
+        // the old summary step cost an extra generation per refresh and could hallucinate.
+        let cleanedOCR = OCRTextHygiene.clean(
+            lines: extracted.lines,
+            fieldText: context.precedingText + " " + context.trailingText,
+            maxChars: configuration.maxRecognizedCharacters
+        )
+        let normalizedText = normalizeRecognizedText(cleanedOCR)
 
         if CotabbyDebugOptions.isEnabled {
             saveDebugScreenshot(
                 screenshot.image,
-                text: extractedText,
+                text: extracted.text,
                 name: sanitizedDebugName(from: context.applicationName)
             )
         }
 
-        CotabbyLogger.app.debug("OCR extracted \(normalizedText.count) chars from screenshot")
-        guard hasMeaningfulSignal(normalizedText) else {
-            throw ScreenshotContextGenerationError.unavailable(
-                "The screenshot did not contain enough visible text to build prompt context."
-            )
-        }
-
-        let generatedContextText: String
-        if let summarizer = summarizer {
-            await onStatusChange?(.summarizingText)
-            do {
-                generatedContextText = try await summarizer.summarize(
-                    text: normalizedText,
-                    applicationName: context.applicationName
-                )
-            } catch {
-                // Summarization can fail when no GGUF model is available (e.g. the user
-                // hasn't downloaded one yet, or is using Apple Intelligence). Fall back to
-                // the raw OCR text so visual context still reaches the prompt.
-                generatedContextText = normalizedText
-            }
-        } else {
-            generatedContextText = normalizedText
-        }
-
-        let finalContextText = boundedSummaryText(generatedContextText)
+        let finalContextText = boundedSummaryText(normalizedText)
         guard hasMeaningfulSignal(finalContextText) else {
             throw ScreenshotContextGenerationError.unavailable(
                 "The screenshot did not contain enough visible text to build prompt context."
             )
         }
 
-        return VisualContextExcerpt(
-            text: finalContextText
+        CotabbyLogger.app.debug(
+            "Visual context ready source=\(ContextSource.ocrFallback.rawValue) chars=\(finalContextText.count)"
         )
+
+        return VisualContextExcerpt(text: finalContextText)
     }
 
     private func captureScreenshot(

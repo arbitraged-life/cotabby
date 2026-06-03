@@ -82,6 +82,22 @@ extension SuggestionGenerating {
     func prewarm(for request: SuggestionRequest) async {}
 }
 
+/// Behavior-shaped view of the llama runtime that `LlamaSuggestionEngine` depends on: run one
+/// generation and drop the native KV cache. Extracted so the engine's failure handling — in
+/// particular the invariant that a *cancelled* generation must NOT reset the cache (resetting it on
+/// every superseded keystroke was the base-model input-lag regression) — can be unit-tested against
+/// a fake runtime instead of loading a real model. `LlamaRuntimeManager` is the production conformer.
+@MainActor
+protocol LlamaRuntimeGenerating: AnyObject {
+    func generateTree(
+        prompt: String,
+        cachedPrefixBytes: Int?,
+        options: LlamaGenerationOptions,
+        config: TreeDecodeConfiguration
+    ) async throws -> TreeDecodeResult
+    func resetPromptCache()
+}
+
 @MainActor
 protocol SuggestionSettingsProviding: AnyObject {
     var snapshot: SuggestionSettingsSnapshot { get }

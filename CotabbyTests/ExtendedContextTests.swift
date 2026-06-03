@@ -158,6 +158,7 @@ final class ExtendedContextTests: XCTestCase {
         XCTAssertFalse(prompt.contains("Reference notes from the user"))
     }
 
+
     // MARK: - foundation model rendering
 
     /// Reference notes live in the cached instructions channel so they're not re-tokenized on

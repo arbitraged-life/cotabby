@@ -10,11 +10,56 @@ import Logging
 /// That separation matters because prompt strategy changes far more often than model lifecycle code.
 @MainActor
 final class LlamaSuggestionEngine {
-    private let runtimeManager: LlamaRuntimeManager
+    private let runtimeManager: LlamaRuntimeGenerating
     private let suggestionSettings: SuggestionSettingsModel
     private var promptCacheHintTracker = LlamaPromptCacheHintTracker()
 
-    init(runtimeManager: LlamaRuntimeManager, suggestionSettings: SuggestionSettingsModel) {
+    /// UserDefaults key (no UI) that routes llama generation through the deterministic constrained
+    /// decoder instead of the engine's stochastic sampler. Default-off: decode quality can only be
+    /// judged with a real model in a real field, so this stays a hidden developer/dogfood toggle
+    /// until it is validated on device and promoted to the default.
+    private static let constrainedDecoderDefaultsKey = "cotabbyConstrainedDecoderEnabled"
+    private static var isConstrainedDecoderEnabled: Bool {
+        UserDefaults.standard.bool(forKey: constrainedDecoderDefaultsKey)
+    }
+
+    /// UserDefaults key (no UI) for the constrained decoder's beam width. Default 1 keeps the existing
+    /// single-path greedy decode; a value > 1 runs a multi-branch beam search. Paired with the
+    /// constrained-decoder flag as a hidden developer/dogfood knob until validated on device.
+    private static let constrainedBeamWidthDefaultsKey = "cotabbyConstrainedBeamWidth"
+    private static var constrainedBeamWidth: Int {
+        let stored = UserDefaults.standard.integer(forKey: constrainedBeamWidthDefaultsKey)
+        return stored > 0 ? stored : 1
+    }
+
+    /// UserDefaults key (no UI) for fill-in-middle prompting. Default off: FIM only helps models that
+    /// ship the FIM marker tokens, and it changes the prompt structure, so it stays a developer toggle
+    /// until validated on device.
+    private static let fillInMiddleDefaultsKey = "cotabbyFillInMiddleEnabled"
+    private static var isFillInMiddleEnabled: Bool {
+        UserDefaults.standard.bool(forKey: fillInMiddleDefaultsKey)
+    }
+
+    /// The fill-in-middle request for a generation, or nil to use the forward base prompt. Built only
+    /// when the flag is on and the caret is genuinely mid-line (real text follows it on the same line);
+    /// the runtime still falls back to the base prompt when the model lacks FIM markers.
+    private static func fillInMiddleRequest(for request: SuggestionRequest) -> FillInMiddleRequest? {
+        guard isFillInMiddleEnabled else {
+            return nil
+        }
+        // A caret at end of line wants a forward continuation, not infilling — even if `trailingText`
+        // is non-empty because a line break and later paragraphs follow it. Gating on end-of-line
+        // (rather than `trailingText.isEmpty`) keeps FIM to the case it is actually meant for.
+        guard !request.context.isCaretAtEndOfLine else {
+            return nil
+        }
+        return FillInMiddleRequest(
+            prefix: request.context.precedingText,
+            suffix: request.context.trailingText
+        )
+    }
+
+    init(runtimeManager: LlamaRuntimeGenerating, suggestionSettings: SuggestionSettingsModel) {
         self.runtimeManager = runtimeManager
         self.suggestionSettings = suggestionSettings
     }
@@ -46,7 +91,15 @@ final class LlamaSuggestionEngine {
                 topP: request.topP,
                 minP: request.minP,
                 repetitionPenalty: request.repetitionPenalty,
-                seed: request.randomSeed
+                seed: request.randomSeed,
+                singleLine: !request.isMultiLineEnabled,
+                forceWordContinuation: MidWordContinuationPolicy.shouldForceContinuation(
+                    precedingText: request.context.precedingText,
+                    trailingText: request.context.trailingText
+                ),
+                useConstrainedDecoder: Self.isConstrainedDecoderEnabled,
+                beamWidth: Self.constrainedBeamWidth,
+                fillInMiddle: Self.fillInMiddleRequest(for: request)
             )
 
             // Use tree decode when enabled (candidateCount > 1)
@@ -65,7 +118,8 @@ final class LlamaSuggestionEngine {
                 throw SuggestionClientError.generationFailed("Tree decode returned no candidates.")
             }
 
-            let normalizedPrimary = SuggestionTextNormalizer.normalize(primary.text, for: request)
+            let normalization = SuggestionTextNormalizer.normalizeDetailed(primary.text, for: request)
+            let normalizedPrimary = normalization.text
             let normalizedAlternatives = treeResult.alternatives.map {
                 SuggestionTextNormalizer.normalize($0.text, for: request)
             }.filter { !$0.isEmpty && $0 != normalizedPrimary }
@@ -73,13 +127,30 @@ final class LlamaSuggestionEngine {
             let latency = Date().timeIntervalSince(startTime)
             let latencyMs = Int(latency * 1000)
             let altCount = normalizedAlternatives.count
+            // `suppression_reason` distinguishes an empty ghost text caused by the model producing
+            // nothing from one a filter dropped — the join key for judging decode quality on device.
+            let suppressionReason = normalization.suppression?.rawValue ?? "none"
             CotabbyLogger.suggestion.debug(
                 "Llama tree decode",
-                metadata: [
+                metadata: baseMetadata.merging([
                     "primary_chars": .stringConvertible(normalizedPrimary.count),
                     "alternatives": .stringConvertible(altCount),
+                    "suppression_reason": .string(suppressionReason),
                     "latency_ms": .stringConvertible(latencyMs)
-                ]
+                ]) { _, new in new }
+            )
+            CotabbyLogger.llmIO.debug(
+                "llama generation",
+                metadata: baseMetadata.merging([
+                    "prompt": .string(request.prompt),
+                    "completion_raw": .string(primary.text),
+                    "completion_normalized": .string(normalizedPrimary),
+                    "prompt_bytes": .stringConvertible(request.prompt.utf8.count),
+                    "suppression_reason": .string(suppressionReason),
+                    "latency_ms": .stringConvertible(latencyMs),
+                    "cache_hint_bytes": .string(hintDesc),
+                    "max_tokens": .stringConvertible(request.maxPredictionTokens)
+                ]) { _, new in new }
             )
             return SuggestionResult(
                 generation: request.generation,
@@ -90,6 +161,22 @@ final class LlamaSuggestionEngine {
             )
         } catch is CancellationError {
             CotabbyLogger.suggestion.debug("Llama generation cancelled", metadata: baseMetadata)
+            throw SuggestionClientError.cancelled
+        } catch LlamaRuntimeError.cancelled {
+            // A cancelled generation is NOT a runtime failure, so it must not reset the KV cache.
+            // `LlamaRuntimeManager.generate` surfaces an outer-Task cancellation as
+            // `LlamaRuntimeError.cancelled` (its `catch is CancellationError` rethrows it so callers
+            // share one error vocabulary). Without this branch that case falls through to the generic
+            // `LlamaRuntimeError` handler below and wipes the native KV sequence on every cancel.
+            //
+            // During fast typing nearly every keystroke supersedes the previous in-flight generation,
+            // so that path fired ~twice a second — each time synchronously destroying the prompt KV on
+            // the main actor (contending with the keystroke-delivery run loop) and forcing the next
+            // keystroke to re-decode the whole prompt from scratch. The cooperative cancel inside
+            // `LlamaRuntimeCore.generate` already unwound cleanly (its KV-trim defer restored
+            // prompt-only state), so the cache is still valid and reusable. Route this to the same
+            // quiet path as `CancellationError` and leave the cache intact.
+            CotabbyLogger.suggestion.debug("Llama generation cancelled (runtime task)", metadata: baseMetadata)
             throw SuggestionClientError.cancelled
         } catch let error as LlamaRuntimeError {
             CotabbyLogger.suggestion.error(

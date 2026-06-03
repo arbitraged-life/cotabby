@@ -63,7 +63,7 @@ The coordinator should not own pure decision rules or low-level OS logic. Those 
 - `Cotabby/Support/SuggestionRequestFactory.swift`: pure request building
 - `Cotabby/Support/SuggestionSessionReconciler.swift`: pure session and acceptance rules
 - `Cotabby/Support/SuggestionAvailabilityEvaluator.swift`: pure gating logic
-- `Cotabby/Services/Visual/VisualContextCoordinator.swift`: legacy screenshot/OCR lifecycle (deprecated during context rebuild)
+- `Cotabby/Services/Visual/VisualContextCoordinator.swift`: screenshot/OCR lifecycle; OCR text is cleaned by the pure `OCRTextHygiene` filters (no model-summarization step)
 - `Cotabby/Services/Runtime/LlamaSuggestionEngine.swift`: prompt/result normalization over the runtime
 
 ## Focus And Accessibility
@@ -86,6 +86,8 @@ The local model runtime is intentionally split:
 - `LlamaSuggestionEngine`: suggestion-specific normalization and error mapping
 
 That split matters because runtime lifecycle concerns change at a different rate than prompt strategy or output cleanup.
+
+The constrained decoder, beam search, and fill-in-middle prompting ship behind default-off developer flags.
 
 ## Safe Change Order
 

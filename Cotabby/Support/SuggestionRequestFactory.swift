@@ -48,8 +48,12 @@ enum SuggestionRequestFactory {
         )
         let completionLengthInstruction = settings.selectedWordCountPreset.promptInstruction
         let userName = activeUserName(settings: settings)
-        // Already normalized (trimmed/deduped/capped) by SuggestionSettingsModel.setRules.
-        let customRules = settings.customRules
+        // Custom rules are hidden from users (CustomRulesCatalog.isUserFacingEnabled == false): the
+        // base-model OSS path cannot obey free-text instructions and the rule text leaks into output,
+        // so injection is suppressed on every engine. Stored rules survive untouched, so flipping the
+        // flag restores this. When enabled, the value is already normalized (trimmed/deduped/capped)
+        // by SuggestionSettingsModel.setRules.
+        let customRules = CustomRulesCatalog.isUserFacingEnabled ? settings.customRules : []
         // The settings model length-caps but does NOT trim whitespace (trimming on every keystroke
         // would prevent the user from typing a space at the end of a word in the editor). Do the
         // trim here, once per request, and collapse a whitespace-only body back to nil so renderers
@@ -67,7 +71,6 @@ enum SuggestionRequestFactory {
         let boundedVisualContextSummary = activeVisualContextSummary(
             rawSummary: visualContextSummary
         )
-
         // Inject personalization vocabulary as a soft preference when strength > 0.
         var effectiveRules = customRules
         // Field-type / per-app soft hints resolved by FieldPolicyResolver. Appended as ordinary
@@ -89,6 +92,11 @@ enum SuggestionRequestFactory {
             }
         }
 
+        // Open Source path renders via LlamaPromptRenderer (prose, no standalone `Label:` lines):
+        // it threads the user's clipboard, reference notes, persona and custom rules into the
+        // continuation prompt the local llama engine consumes. The Foundation Models path builds its
+        // own messages from these same request fields, so this prompt string is only consumed by the
+        // llama engine. The preview shown to the user is this exact string (preview == prompt).
         let prompt = LlamaPromptRenderer.prompt(
             prefixText: prefixText,
             suffixText: truncatedSuffix(from: context.trailingText),

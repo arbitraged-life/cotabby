@@ -225,7 +225,14 @@ enum CotabbyTestFixtures {
         autoAcceptTrailingPunctuation: Bool = true,
         isFastModeEnabled: Bool = false,
         mirrorPreference: MirrorPreference = .auto,
-        acceptanceGranularity: AcceptanceGranularity = .word
+        acceptanceGranularity: AcceptanceGranularity = .word,
+        isTypoSuppressionEnabled: Bool = false,
+        isTypoCorrectionDisplayEnabled: Bool = false,
+        isInputStorageEnabled: Bool = false,
+        personalizationStrength: Double = 0,
+        includeTrailingSpace: Bool = false,
+        isMidLineCompletionEnabled: Bool = false,
+        pausedUntil: Date? = nil
     ) -> SuggestionSettingsSnapshot {
         SuggestionSettingsSnapshot(
             isGloballyEnabled: isGloballyEnabled,
@@ -243,7 +250,14 @@ enum CotabbyTestFixtures {
             autoAcceptTrailingPunctuation: autoAcceptTrailingPunctuation,
             isFastModeEnabled: isFastModeEnabled,
             mirrorPreference: mirrorPreference,
-            acceptanceGranularity: acceptanceGranularity
+            acceptanceGranularity: acceptanceGranularity,
+            isTypoSuppressionEnabled: isTypoSuppressionEnabled,
+            isTypoCorrectionDisplayEnabled: isTypoCorrectionDisplayEnabled,
+            isInputStorageEnabled: isInputStorageEnabled,
+            personalizationStrength: personalizationStrength,
+            includeTrailingSpace: includeTrailingSpace,
+            isMidLineCompletionEnabled: isMidLineCompletionEnabled,
+            pausedUntil: pausedUntil
         )
     }
 }
