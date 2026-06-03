@@ -23,4 +23,4 @@ jobs:
         uses: luckyPipewrench/pipelock@6d8aaf4a6e8b64d800a3b7d444c924049a9f21d0 # v1.3.0
         with:
           scan-diff: true
-          fail-on-findings: false
+          fail-on-findings: true
