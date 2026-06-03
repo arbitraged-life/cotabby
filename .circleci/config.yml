@@ -17,16 +17,6 @@ jobs:
       # Checkout the code as the first step.
       - checkout
       - run:
-          name: "Build Cotabby"
-          command: |
-            xcodebuild \
-              -project Cotabby.xcodeproj \
-              -scheme Cotabby \
-              -configuration Debug \
-              -destination 'platform=macOS' \
-              CODE_SIGNING_ALLOWED=NO \
-              build
-      - run:
           name: "Run tests"
           command: |
             xcodebuild test \
