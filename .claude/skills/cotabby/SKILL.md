@@ -46,7 +46,7 @@ This skill teaches you the core development patterns and conventions used in the
 **Command:** `/commit`
 
 1. Make your code changes following the coding conventions.
-2. Stage your changes:  
+   ```bash
    ```
    git add .
    ```

@@ -91,5 +91,4 @@ This skill teaches you the core development patterns and conventions used in the
 | Command   | Purpose                                 |
 |-----------|-----------------------------------------|
 | /commit   | Guide for making conventional commits   |
-| /test     | Instructions for running the test suite |
 ```
