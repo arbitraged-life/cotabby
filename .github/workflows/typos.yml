@@ -1,0 +1,15 @@
+name: Typos
+
+permissions:
+  contents: read
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  typos:
+    name: Spell check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Check spelling
+        uses: crate-ci/typos@c16dc8f5c6a5a390ad7ad6161a58ec627c4678c0 # v1.27.3
