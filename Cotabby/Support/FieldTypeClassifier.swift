@@ -1,7 +1,7 @@
 import Foundation
 
-/// Classifies the currently focused accessibility element into a semantic field type.
-/// All classification logic is pure (no AX reads, no side effects).
+// Classifies the currently focused accessibility element into a semantic field type.
+// All classification logic is pure (no AX reads, no side effects).
 
 // MARK: - FieldType
 

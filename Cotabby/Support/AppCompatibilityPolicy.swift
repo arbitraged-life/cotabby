@@ -31,8 +31,8 @@ struct AppPolicy: Sendable, Equatable {
     var fontSizeAdjustmentFactor: Double = 1.0
     var verticalAlignmentOffset: Double = 0.0
     var debounceProfile: DebounceProfile = .standard
-    var fieldTypeOverride: FieldType? = nil
-    var customPromptHint: String? = nil
+    var fieldTypeOverride: FieldType?
+    var customPromptHint: String?
 
     static let `default` = AppPolicy()
 }
@@ -56,24 +56,24 @@ struct AppOverride: Sendable {
     /// Returns true if this override matches the given target.
     func matches(bundleID: String?, targetDomain: String?) -> Bool {
         if let bid = bundleIdentifier, bid == bundleID { return true }
-        if let d = domain, let td = targetDomain {
-            let normalized = td.lowercased().replacingOccurrences(of: "www.", with: "")
-            if normalized.hasSuffix(d) || normalized == d { return true }
+        if let matchedDomain = domain, let targetDomain = targetDomain {
+            let normalized = targetDomain.lowercased().replacingOccurrences(of: "www.", with: "")
+            if normalized.hasSuffix(matchedDomain) || normalized == matchedDomain { return true }
         }
         return false
     }
 
     /// Applies this override onto a base policy (non-nil fields win).
     func apply(to policy: inout AppPolicy) {
-        if let v = completionsEnabled { policy.completionsEnabled = v }
-        if let v = midLineAllowed { policy.midLineAllowed = v }
-        if let v = insertionStrategy { policy.insertionStrategy = v }
-        if let v = overlayPreference { policy.overlayPreference = v }
-        if let v = fontSizeAdjustmentFactor { policy.fontSizeAdjustmentFactor *= v }
-        if let v = verticalAlignmentOffset { policy.verticalAlignmentOffset += v }
-        if let v = debounceProfile { policy.debounceProfile = v }
-        if let v = fieldTypeOverride { policy.fieldTypeOverride = v }
-        if let v = customPromptHint { policy.customPromptHint = v }
+        if let value = completionsEnabled { policy.completionsEnabled = value }
+        if let value = midLineAllowed { policy.midLineAllowed = value }
+        if let value = insertionStrategy { policy.insertionStrategy = value }
+        if let value = overlayPreference { policy.overlayPreference = value }
+        if let value = fontSizeAdjustmentFactor { policy.fontSizeAdjustmentFactor *= value }
+        if let value = verticalAlignmentOffset { policy.verticalAlignmentOffset += value }
+        if let value = debounceProfile { policy.debounceProfile = value }
+        if let value = fieldTypeOverride { policy.fieldTypeOverride = value }
+        if let value = customPromptHint { policy.customPromptHint = value }
     }
 }
 
@@ -113,7 +113,7 @@ final class AppCompatibilityStore: Sendable {
         let codeOverrides = [
             AppOverride(bundleIdentifier: "com.apple.dt.Xcode", debounceProfile: .aggressive, fieldTypeOverride: .code),
             AppOverride(bundleIdentifier: "com.microsoft.VSCode", debounceProfile: .aggressive, fieldTypeOverride: .code),
-            AppOverride(bundleIdentifier: "com.todesktop.230313mzl4w4u92", debounceProfile: .aggressive, fieldTypeOverride: .code),
+            AppOverride(bundleIdentifier: "com.todesktop.230313mzl4w4u92", debounceProfile: .aggressive, fieldTypeOverride: .code)
         ]
 
         // Web apps requiring paste-and-match-style
@@ -128,12 +128,12 @@ final class AppCompatibilityStore: Sendable {
             AppOverride(bundleIdentifier: "com.hnc.Discord",
                         insertionStrategy: .pasteAndMatchStyle, overlayPreference: .mirror),
             AppOverride(domain: "discord.com", insertionStrategy: .pasteAndMatchStyle, overlayPreference: .mirror),
-            AppOverride(domain: "notion.so", insertionStrategy: .pasteAndMatchStyle, overlayPreference: .mirror),
+            AppOverride(domain: "notion.so", insertionStrategy: .pasteAndMatchStyle, overlayPreference: .mirror)
         ]
 
         // Browser-specific
         let browserOverrides = [
-            AppOverride(bundleIdentifier: "com.apple.Safari", fontSizeAdjustmentFactor: 0.98, verticalAlignmentOffset: 1.0),
+            AppOverride(bundleIdentifier: "com.apple.Safari", fontSizeAdjustmentFactor: 0.98, verticalAlignmentOffset: 1.0)
         ]
 
         // WeChat — chunked injection (handled by caller mapping to chunkedInjection strategy)

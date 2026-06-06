@@ -29,7 +29,11 @@ enum CotypistImporter {
         case "jsonl":
             return importJSONL(at: url)
         default:
-            return ImportResult(importedCount: 0, skippedCount: 0, errorMessage: "Unsupported file type: .\(ext). Use .db, .json, or .jsonl.")
+            return ImportResult(
+                importedCount: 0,
+                skippedCount: 0,
+                errorMessage: "Unsupported file type: .\(ext). Use .db, .json, or .jsonl."
+            )
         }
     }
 
@@ -40,7 +44,11 @@ enum CotypistImporter {
         guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
             let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "Unknown error"
             sqlite3_close(db)
-            return ImportResult(importedCount: 0, skippedCount: 0, errorMessage: "Failed to open database: \(msg). If the DB is encrypted, decrypt it first with sqlcipher.")
+            return ImportResult(
+                importedCount: 0,
+                skippedCount: 0,
+                errorMessage: "Failed to open database: \(msg). If the DB is encrypted, decrypt it first with sqlcipher."
+            )
         }
         defer { sqlite3_close(db) }
 
@@ -108,7 +116,11 @@ enum CotypistImporter {
             return importPlainTexts(texts)
         }
 
-        return ImportResult(importedCount: 0, skippedCount: 0, errorMessage: "Could not parse JSON. Expected an array of objects with 'textUpToCursor' or an array of strings.")
+        return ImportResult(
+            importedCount: 0,
+            skippedCount: 0,
+            errorMessage: "Could not parse JSON. Expected an array of objects with 'textUpToCursor' or an array of strings."
+        )
     }
 
     // MARK: - JSONL (newline-delimited)
