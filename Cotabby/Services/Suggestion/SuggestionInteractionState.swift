@@ -47,7 +47,12 @@ final class SuggestionInteractionState {
         clearSuggestion()
     }
 
-    func startSession(fullText: String, liveContext: FocusedInputContext, latency: TimeInterval, alternatives: [String] = []) -> ActiveSuggestionSession {
+    func startSession(
+        fullText: String,
+        liveContext: FocusedInputContext,
+        latency: TimeInterval,
+        alternatives: [String] = []
+    ) -> ActiveSuggestionSession {
         let session = ActiveSuggestionSession(
             baseContext: liveContext,
             fullText: fullText,

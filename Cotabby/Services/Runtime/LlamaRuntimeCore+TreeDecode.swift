@@ -74,11 +74,11 @@ extension LlamaRuntimeCore {
         let alternativeCount = min(config.candidateCount - 1, 3) // max 3 alternatives (engine limit: 4 total)
         let altMaxTokens = config.alternativeMaxTokens ?? options.maxPredictionTokens
 
-        for i in 0 ..< alternativeCount {
+        for branchIndex in 0 ..< alternativeCount {
             if Task.isCancelled { break }
 
             // Apply diversity: scale temperature for each branch
-            let factor = i < config.diversityFactors.count ? config.diversityFactors[i] : Double(i + 2)
+            let factor = branchIndex < config.diversityFactors.count ? config.diversityFactors[branchIndex] : Double(branchIndex + 2)
             let altOptions = LlamaGenerationOptions(
                 maxPredictionTokens: altMaxTokens,
                 temperature: min(options.temperature * factor, 2.0), // cap at 2.0
@@ -86,7 +86,7 @@ extension LlamaRuntimeCore {
                 topP: options.topP,
                 minP: max(options.minP * 0.5, 0.01), // relax minP for diversity
                 repetitionPenalty: options.repetitionPenalty,
-                seed: options.seed.map { $0 + UInt32(i + 1) } // different seed per branch
+                seed: options.seed.map { $0 + UInt32(branchIndex + 1) } // different seed per branch
             )
 
             let altStart = Date()
@@ -103,7 +103,7 @@ extension LlamaRuntimeCore {
                         text: altText,
                         tokenCount: estimateTokenCount(altText),
                         latency: altLatency,
-                        branchIndex: i + 1
+                        branchIndex: branchIndex + 1
                     ))
                 }
             } catch {

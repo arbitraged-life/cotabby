@@ -116,15 +116,15 @@ final class ModelPerformanceTracker: ObservableObject {
         }.sorted { $0.medianDecodeTokensPerSecond > $1.medianDecodeTokensPerSecond }
     }
 
-    private func percentile(_ sorted: [Int], _ p: Int) -> Int {
+    private func percentile(_ sorted: [Int], _ percentile: Int) -> Int {
         guard !sorted.isEmpty else { return 0 }
-        let idx = min(sorted.count - 1, max(0, Int(Double(sorted.count) * Double(p) / 100.0)))
+        let idx = min(sorted.count - 1, max(0, Int(Double(sorted.count) * Double(percentile) / 100.0)))
         return sorted[idx]
     }
 
-    private func percentileDouble(_ sorted: [Double], _ p: Int) -> Double {
+    private func percentileDouble(_ sorted: [Double], _ percentile: Int) -> Double {
         guard !sorted.isEmpty else { return 0 }
-        let idx = min(sorted.count - 1, max(0, Int(Double(sorted.count) * Double(p) / 100.0)))
+        let idx = min(sorted.count - 1, max(0, Int(Double(sorted.count) * Double(percentile) / 100.0)))
         return sorted[idx]
     }
 

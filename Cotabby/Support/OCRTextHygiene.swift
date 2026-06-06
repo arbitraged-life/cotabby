@@ -24,11 +24,6 @@ enum OCRTextHygiene {
     struct OCRLine: Equatable, Sendable {
         let text: String
         let confidence: Float
-
-        init(text: String, confidence: Float) {
-            self.text = text
-            self.confidence = confidence
-        }
     }
 
     // MARK: - Allowed character sets

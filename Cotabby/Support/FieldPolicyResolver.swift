@@ -1,16 +1,16 @@
 import Foundation
 
-/// File overview:
-/// Single composition point that turns a focused-input snapshot into a fully resolved per-field
-/// behaviour policy. This is the seam that wires four previously-inert decision modules
-/// (`AppCompatibilityStore`, `FieldTypeClassifier`, `AdaptiveDebounceController`, and
-/// `InsertionStrategyResolver`) into the live suggestion pipeline.
-///
-/// Architectural role:
-/// `SuggestionCoordinator` resolves one of these per focus change and consults the result at the
-/// three pure decision points it already owns — the generation gate, the debounce timing, and the
-/// prompt build. Keeping the composition here means the coordinator stays orchestration code and
-/// the policy rules stay unit-testable in isolation.
+// File overview:
+// Single composition point that turns a focused-input snapshot into a fully resolved per-field
+// behaviour policy. This is the seam that wires four previously-inert decision modules
+// (`AppCompatibilityStore`, `FieldTypeClassifier`, `AdaptiveDebounceController`, and
+// `InsertionStrategyResolver`) into the live suggestion pipeline.
+//
+// Architectural role:
+// `SuggestionCoordinator` resolves one of these per focus change and consults the result at the
+// three pure decision points it already owns — the generation gate, the debounce timing, and the
+// prompt build. Keeping the composition here means the coordinator stays orchestration code and
+// the policy rules stay unit-testable in isolation.
 
 // MARK: - ResolvedFieldPolicy
 
