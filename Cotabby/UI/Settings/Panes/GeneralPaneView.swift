@@ -78,7 +78,9 @@ struct GeneralPaneView: View {
                 Toggle(isOn: clipboardContextEnabledBinding) {
                     SettingsRowLabel(
                         title: "Include Clipboard Context",
-                        description: "Enable clipboard context for more relevant completions. When enabled, Cotabby reads your clipboard to better understand what you're working on. Clipboard contents are processed locally and are never stored or sent anywhere."
+                        description: "Enable clipboard context for more relevant completions. " +
+                            "When enabled, Cotabby reads your clipboard to better understand what you're working on. " +
+                            "Clipboard contents are processed locally and are never stored or sent anywhere."
                     )
                 }
 
@@ -117,7 +119,9 @@ struct GeneralPaneView: View {
                 Toggle(isOn: typoSuppressionBinding) {
                     SettingsRowLabel(
                         title: "Don't Show Completions When Typo Suspected",
-                        description: "Hides the completion when Cotabby suspects a typo in the word you're currently typing. It only ever looks at the current word and may occasionally miss or misjudge a typo. It is not a substitute for a full spell-checker."
+                        description: "Hides the completion when Cotabby suspects a typo in the word you're currently typing. " +
+                            "It only ever looks at the current word and may occasionally miss or misjudge a typo. " +
+                            "It is not a substitute for a full spell-checker."
                     )
                 }
 
@@ -125,7 +129,8 @@ struct GeneralPaneView: View {
                     Toggle(isOn: typoCorrectionDisplayBinding) {
                         SettingsRowLabel(
                             title: "Show Suggested Fixes",
-                            description: "When a likely correction is available, show it inline as a strikethrough on the typo with the fix next to it."
+                            description: "When a likely correction is available, show it inline as a strikethrough " +
+                                "on the typo with the fix next to it."
                         )
                     }
                     .padding(.leading, 16)
@@ -136,7 +141,10 @@ struct GeneralPaneView: View {
                 Toggle(isOn: inputStorageBinding) {
                     SettingsRowLabel(
                         title: "Store Inputs Without Accepted Completions",
-                        description: "When enabled, Cotabby will store all inputs in text fields it monitors, even when you don't accept any completions. This helps build a more comprehensive dataset of your writing. When disabled, only inputs where you accepted at least one completion will be stored."
+                        description: "When enabled, Cotabby will store all inputs in text fields it monitors, " +
+                            "even when you don't accept any completions. This helps build a more comprehensive " +
+                            "dataset of your writing. When disabled, only inputs where you accepted at least one " +
+                            "completion will be stored."
                     )
                 }
 
@@ -144,13 +152,20 @@ struct GeneralPaneView: View {
                     HStack {
                         Text("Personalize Word Choice")
                         Spacer()
-                        Text(suggestionSettings.personalizationStrength == 0 ? "Off" : String(format: "%.0f%%", suggestionSettings.personalizationStrength * 100))
-                            .foregroundStyle(.secondary)
+                        Text(
+                            suggestionSettings.personalizationStrength == 0
+                                ? "Off"
+                                : String(format: "%.0f%%", suggestionSettings.personalizationStrength * 100)
+                        )
+                        .foregroundStyle(.secondary)
                     }
                     Slider(value: personalizationStrengthBinding, in: 0...1, step: 0.1)
-                    Text("Uses your typing history to slightly favor the words and phrases you prefer. Subtle at lower values; too high may occasionally suggest a less fitting word.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text(
+                        "Uses your typing history to slightly favor the words and phrases you prefer. " +
+                            "Subtle at lower values; too high may occasionally suggest a less fitting word."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
 
                 HStack {
@@ -206,9 +221,13 @@ struct GeneralPaneView: View {
 
             Section("Labs") {
                 Toggle("Enable mid-line completions", isOn: midLineCompletionBinding)
-                Text("Show completions even when there is text after the cursor on the same line. Completions will continue your current sentence forward from the cursor rather than filling in gaps between existing text.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Show completions even when there is text after the cursor on the same line. " +
+                        "Completions will continue your current sentence forward from the cursor rather than " +
+                        "filling in gaps between existing text."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             if suggestionSettings.isEmojiPickerEnabled {
