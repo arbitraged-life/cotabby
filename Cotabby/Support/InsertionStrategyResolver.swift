@@ -30,7 +30,7 @@ enum InsertionError: Error {
 
 /// Tags CGEvents so Cotabby's own AX observer ignores self-generated input.
 enum SynthesizedEventMarker {
-    static let userData: Int64 = 0x436F746162627901  // "Cotabby\x01"
+    static let userData: Int64 = 0x436F_7461_6262_7901 // "Cotabby\x01"
 
     static func stamp(_ event: CGEvent) {
         event.setIntegerValueField(.eventSourceUserData, value: userData)
@@ -87,7 +87,6 @@ final class PasteboardSnapshot {
 
 /// Executes text insertion using the resolved strategy.
 final class MultiStrategyInserter: CompletionInserting {
-
     @MainActor
     func insert(_ text: String, using strategy: ResolvedInsertionStrategy) async throws {
         switch strategy {
@@ -99,7 +98,7 @@ final class MultiStrategyInserter: CompletionInserting {
             try await pasteboardInsert(text, matchStyle: true)
         case .axAttributeWrite:
             try axWrite(text)
-        case .chunkedInjection(let chunkSize):
+        case let .chunkedInjection(chunkSize):
             try await chunkedInsert(text, chunkSize: chunkSize)
         }
     }
@@ -144,8 +143,9 @@ final class MultiStrategyInserter: CompletionInserting {
         var flags: CGEventFlags = .maskCommand
         if matchStyle { flags.insert([.maskAlternate, .maskShift]) }
 
-        if let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true),
-           let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false) {
+        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true)
+        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false)
+        if let keyDown, let keyUp {
             keyDown.flags = flags
             keyUp.flags = flags
             SynthesizedEventMarker.stamp(keyDown)
@@ -162,13 +162,10 @@ final class MultiStrategyInserter: CompletionInserting {
     // MARK: - AX Attribute Write
 
     private func axWrite(_ text: String) throws {
-        let systemWide = AXUIElementCreateSystemWide()
-        var focusedElement: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedElement)
-        guard result == .success, let element = focusedElement else {
+        guard let axElement = AXHelper.focusedElement() else {
             throw InsertionError.noFocusedElement
         }
-        let axElement = element as! AXUIElement
+
         let writeResult = AXUIElementSetAttributeValue(axElement, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
         guard writeResult == .success else {
             throw InsertionError.axWriteFailed(writeResult)
@@ -181,7 +178,7 @@ final class MultiStrategyInserter: CompletionInserting {
         let chunks = stride(from: 0, to: text.count, by: chunkSize).map { start -> String in
             let startIdx = text.index(text.startIndex, offsetBy: start)
             let endIdx = text.index(startIdx, offsetBy: min(chunkSize, text.count - start))
-            return String(text[startIdx..<endIdx])
+            return String(text[startIdx ..< endIdx])
         }
         for chunk in chunks {
             try synthesizeKeystrokes(for: chunk)
