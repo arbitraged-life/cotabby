@@ -1,3 +1,5 @@
+# Org-standard policy workflow — thin caller for the shared reusable in
+# NERV-es/.github. Byte-identical across every NERV-es fork.
 name: Close Stale Issues and PRs
 
 on:
@@ -11,25 +13,5 @@ permissions:
 
 jobs:
   stale:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/stale@28ca1036281a5e5922ead5184a1bbf96e5fc984e # v9.0.0
-        with:
-          days-before-stale: 60
-          days-before-close: 14
-          stale-issue-label: stale
-          stale-pr-label: stale
-          exempt-issue-labels: 'pinned,security,keep'
-          exempt-pr-labels: 'pinned,security,keep'
-          stale-issue-message: >
-            This issue has been automatically marked as stale because it has had
-            no activity for 60 days. It will be closed in 14 days if no further
-            activity occurs. Remove the stale label or comment to keep it open.
-          stale-pr-message: >
-            This pull request has been automatically marked as stale because it
-            has had no activity for 60 days. It will be closed in 14 days if no
-            further activity occurs. Remove the stale label or comment to keep it open.
-          close-issue-message: >
-            This issue was closed because it has been stale for 14 days with no activity.
-          close-pr-message: >
-            This pull request was closed because it has been stale for 14 days with no activity.
+    uses: NERV-es/.github/.github/workflows/stale-reusable.yml@c942996fd330257189a6d85e47d3201509b28e3a
+    secrets: inherit
