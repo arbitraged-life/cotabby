@@ -1,8 +1,7 @@
+# Org-standard policy workflow — thin caller for the shared reusable in
+# NERV-es/.github. Byte-identical across every NERV-es fork. Triggers live
+# here; logic lives in the SHA-pinned reusable. Do not edit logic here.
 name: Auto Approve Dependabot
-
-# Auto-approves Dependabot PRs only. No external token required
-# (uses the built-in github-actions bot). Scoped tightly via the
-# actor guard so it can never approve human PRs.
 
 on: pull_request_target
 
@@ -11,9 +10,5 @@ permissions:
 
 jobs:
   auto-approve:
-    runs-on: ubuntu-latest
-    if: github.actor == 'dependabot[bot]'
-    steps:
-      - uses: hmarr/auto-approve-action@b2213b9260d03a16e1d521e9be6d67e0a5e4942a # v4.0.0
-        with:
-          review-message: "Auto-approved Dependabot dependency update."
+    uses: NERV-es/.github/.github/workflows/auto-approve-reusable.yml@c942996fd330257189a6d85e47d3201509b28e3a
+    secrets: inherit
